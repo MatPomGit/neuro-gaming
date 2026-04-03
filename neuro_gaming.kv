@@ -15,12 +15,27 @@
     valign: 'middle'
     color: (1, 1, 1, 1)
     canvas.before:
+        # Outer glow when active
+        Color:
+            rgba: (0.2, 0.6, 1.0, 0.3) if self.active else (0, 0, 0, 0)
+        RoundedRectangle:
+            pos: self.x - 4, self.y - 4
+            size: self.width + 8, self.height + 8
+            radius: [16]
+        # Main background
         Color:
             rgba: (0.18, 0.55, 1.0, 1.0) if self.active else (0.18, 0.18, 0.25, 1.0)
         RoundedRectangle:
             pos: self.pos
             size: self.size
             radius: [12]
+        # Top highlight (inner gloss)
+        Color:
+            rgba: (1, 1, 1, 0.18) if self.active else (1, 1, 1, 0.06)
+        RoundedRectangle:
+            pos: self.x + 4, self.y + self.height * 0.55
+            size: self.width - 8, self.height * 0.35
+            radius: [9]
 
 <BandBar@BoxLayout>:
     channel: ''
@@ -29,15 +44,27 @@
     orientation: 'vertical'
     spacing: 2
     Label:
-        text: root.channel + ' ' + root.band
+        text: root.channel + '\n' + root.band
         font_size: '9sp'
         size_hint_y: None
-        height: '14dp'
+        height: '24dp'
         color: (0.7, 0.7, 0.7, 1)
         halign: 'center'
-    ProgressBar:
-        value: root.value * 100
-        max: 100
+    Widget:
+        canvas:
+            # Track background
+            Color:
+                rgba: (0.1, 0.1, 0.15, 1)
+            RoundedRectangle:
+                pos: self.pos
+                size: self.size
+                radius: [4]
+            # Colored fill – green for alpha, orange for beta
+            Color:
+                rgba: (0.2, 0.85, 0.5, 1) if root.band == 'α' else (1.0, 0.55, 0.15, 1)
+            Rectangle:
+                pos: self.pos
+                size: self.width * root.value, self.height
 
 <DeviceRow@Button>:
     index: 0
@@ -91,13 +118,14 @@
             halign: 'center'
             valign: 'middle'
 
-        # Scan button
+        # Scan button (pulses while scanning)
         Button:
-            text: 'Scan for Muse Devices'
+            text: 'Scanning…' if root.is_scanning else 'Scan for Muse Devices'
             size_hint_y: None
             height: '50dp'
             font_size: '15sp'
             background_color: (0.18, 0.55, 1.0, 1)
+            opacity: root.scan_pulse
             on_release: root.scan()
 
         # Device list
@@ -264,13 +292,26 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 <TestScreen>:
-    # Dark background + movable blue dot drawn behind all children
+    # Dark background + glow rings + movable dot drawn behind all children
     canvas.before:
         Color:
             rgba: (0.05, 0.05, 0.1, 1)
         Rectangle:
             pos: self.pos
             size: self.size
+        # Outer glow
+        Color:
+            rgba: root.dot_color[0], root.dot_color[1], root.dot_color[2], root.dot_color[3] * 0.2
+        Ellipse:
+            pos: root.dot_x - root.dot_radius * 2.2, root.dot_y - root.dot_radius * 2.2
+            size: root.dot_radius * 4.4, root.dot_radius * 4.4
+        # Mid glow
+        Color:
+            rgba: root.dot_color[0], root.dot_color[1], root.dot_color[2], root.dot_color[3] * 0.4
+        Ellipse:
+            pos: root.dot_x - root.dot_radius * 1.5, root.dot_y - root.dot_radius * 1.5
+            size: root.dot_radius * 3, root.dot_radius * 3
+        # Main dot
         Color:
             rgba: root.dot_color
         Ellipse:
