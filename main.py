@@ -24,7 +24,9 @@ Architecture overview
 
 import logging
 import os
+import threading
 
+from kivy.animation import Animation
 from kivy.app import App
 from kivy.clock import Clock
 from kivy.core.window import Window
@@ -36,7 +38,7 @@ from kivy.properties import (
     NumericProperty,
     StringProperty,
 )
-from kivy.uix.screenmanager import Screen, ScreenManager
+from kivy.uix.screenmanager import FadeTransition, Screen, ScreenManager
 
 from src.game_controller import GameController
 from src.muse_connector import MuseConnector
@@ -69,6 +71,10 @@ KV_FILE = os.path.join(os.path.dirname(__file__), "neuro_gaming.kv")
 class ScanScreen(Screen):
     status_text = StringProperty("Press 'Scan' to search for Muse devices.")
     device_names = ListProperty([])
+    is_scanning = BooleanProperty(False)
+    scan_pulse = NumericProperty(1.0)
+
+    _pulse_anim = None
 
     def on_enter(self, *args):
         app = App.get_running_app()
@@ -76,22 +82,47 @@ class ScanScreen(Screen):
         app.connector._on_status = self._update_status  # noqa: SLF001
 
     def scan(self) -> None:
+        if self.is_scanning:
+            return
         app = App.get_running_app()
         self.status_text = "Scanning…"
         self.device_names = []
+        self.is_scanning = True
+        # Pulse the scan button while scanning
+        self._pulse_anim = (
+            Animation(scan_pulse=0.35, duration=0.45) +
+            Animation(scan_pulse=1.0, duration=0.45)
+        )
+        self._pulse_anim.repeat = True
+        self._pulse_anim.start(self)
+        # Run the blocking BLE scan on a background thread so the UI stays responsive
+        threading.Thread(target=self._do_scan, args=(app,), daemon=True).start()
+
+    def _do_scan(self, app) -> None:  # noqa: ANN001
         try:
             app.connector.scan(timeout=5.0)
             names = [
                 f"{d.name}  ({d.address})" for d in app.connector.devices
             ]
-            self.device_names = names if names else ["No Muse devices found."]
-            self.status_text = (
+            device_names = names if names else ["No Muse devices found."]
+            status = (
                 f"Found {len(app.connector.devices)} device(s)."
                 if app.connector.devices
                 else "No Muse devices found."
             )
         except Exception as exc:
-            self.status_text = f"Scan error: {exc}"
+            device_names = []
+            status = f"Scan error: {exc}"
+        Clock.schedule_once(lambda dt: self._scan_done(device_names, status))
+
+    def _scan_done(self, device_names: list, status: str) -> None:
+        if self._pulse_anim:
+            self._pulse_anim.stop(self)
+            self._pulse_anim = None
+        self.device_names = device_names
+        self.status_text = status
+        self.is_scanning = False
+        self.scan_pulse = 1.0
 
     def connect_device(self, index: int) -> None:
         app = App.get_running_app()
@@ -262,8 +293,7 @@ class TestScreen(Screen):
         "W/S/↑/↓ – up/down   A/D/←/→ – left/right   LMB – action   RMB – reset"
     )
 
-    _update_event      = None
-    _color_reset_event = None
+    _update_event = None
 
     def on_enter(self, *args) -> None:
         self._keys_held: set[str] = set()
@@ -276,9 +306,7 @@ class TestScreen(Screen):
         if self._update_event:
             self._update_event.cancel()
             self._update_event = None
-        if self._color_reset_event:
-            self._color_reset_event.cancel()
-            self._color_reset_event = None
+        Animation.cancel_all(self)
         Window.unbind(on_key_down=self._on_key_down)
         Window.unbind(on_key_up=self._on_key_up)
         self._keys_held = set()
@@ -343,25 +371,31 @@ class TestScreen(Screen):
     # ── mouse effects ──────────────────────────────────────────────────────
 
     def _handle_left_click(self, touch) -> None:
-        """Left-click: dot briefly flashes green (action pulse)."""
+        """Left-click: dot pulses and flashes green (action pulse)."""
         self.left_active = True
         App.get_running_app().controller.handle_mouse_down("left")
-        self.dot_color = [0.2, 1.0, 0.4, 1.0]   # flash green
+        Animation.cancel_all(self, 'dot_color', 'dot_radius')
+        anim = (
+            Animation(dot_color=[0.2, 1.0, 0.4, 1.0], dot_radius=28.0,
+                      duration=0.12, t='out_quad') +
+            Animation(dot_color=[0.2, 0.5, 1.0, 1.0], dot_radius=20.0,
+                      duration=0.3, t='in_out_quad')
+        )
+        anim.start(self)
         self.status_text = f"LMB – action at ({int(touch.x)}, {int(touch.y)})"
-        if self._color_reset_event:
-            self._color_reset_event.cancel()
-        self._color_reset_event = Clock.schedule_once(self._reset_dot_color, 0.3)
 
     def _handle_right_click(self, touch) -> None:
-        """Right-click: reset dot position to screen centre."""
+        """Right-click: animate dot smoothly back to screen centre."""
         self.right_active = True
         App.get_running_app().controller.handle_mouse_down("right")
-        self.dot_x = Window.width  / 2.0
-        self.dot_y = Window.height / 2.0
+        Animation.cancel_all(self, 'dot_x', 'dot_y')
+        Animation(
+            dot_x=Window.width / 2.0,
+            dot_y=Window.height / 2.0,
+            duration=0.4,
+            t='out_cubic',
+        ).start(self)
         self.status_text = "RMB – dot reset to centre"
-
-    def _reset_dot_color(self, dt) -> None:  # noqa: ANN001
-        self.dot_color = [0.2, 0.5, 1.0, 1.0]   # back to blue
 
     # ── navigation ─────────────────────────────────────────────────────────
 
@@ -391,7 +425,7 @@ class NeuroGamingApp(App):
         else:
             Builder.load_string(_INLINE_KV)
 
-        sm = ScreenManager()
+        sm = ScreenManager(transition=FadeTransition(duration=0.25))
         sm.add_widget(ScanScreen(name="scan"))
         sm.add_widget(GameScreen(name="game"))
         sm.add_widget(TestScreen(name="test"))
