@@ -20,7 +20,11 @@ from src.signal_processor import (
     _band_power,
 )
 from src.game_controller import (
+    ACTION_LEFT_CLICK,
+    ACTION_RIGHT_CLICK,
     HYSTERESIS_COUNT,
+    MOUSE_LEFT,
+    MOUSE_RIGHT,
     GameController,
     _key_to_direction,
 )
@@ -232,3 +236,92 @@ class TestKeyMapping:
     def test_unknown_key_returns_none(self):
         assert _key_to_direction("space") is None
         assert _key_to_direction("enter") is None
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# GameController – mouse button handling
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestMouseButtons:
+    def test_initial_mouse_state_is_false(self):
+        ctrl = GameController()
+        assert ctrl.left_button_pressed is False
+        assert ctrl.right_button_pressed is False
+
+    def test_handle_mouse_down_left(self):
+        ctrl = GameController()
+        result = ctrl.handle_mouse_down(MOUSE_LEFT)
+        assert result is True
+        assert ctrl.left_button_pressed is True
+        assert ctrl.right_button_pressed is False
+
+    def test_handle_mouse_down_right(self):
+        ctrl = GameController()
+        result = ctrl.handle_mouse_down(MOUSE_RIGHT)
+        assert result is True
+        assert ctrl.right_button_pressed is True
+        assert ctrl.left_button_pressed is False
+
+    def test_handle_mouse_down_unknown_returns_false(self):
+        ctrl = GameController()
+        result = ctrl.handle_mouse_down("middle")
+        assert result is False
+        assert ctrl.left_button_pressed is False
+        assert ctrl.right_button_pressed is False
+
+    def test_handle_mouse_up_left(self):
+        ctrl = GameController()
+        ctrl.handle_mouse_down(MOUSE_LEFT)
+        result = ctrl.handle_mouse_up(MOUSE_LEFT)
+        assert result is True
+        assert ctrl.left_button_pressed is False
+
+    def test_handle_mouse_up_right(self):
+        ctrl = GameController()
+        ctrl.handle_mouse_down(MOUSE_RIGHT)
+        result = ctrl.handle_mouse_up(MOUSE_RIGHT)
+        assert result is True
+        assert ctrl.right_button_pressed is False
+
+    def test_handle_mouse_up_unknown_returns_false(self):
+        ctrl = GameController()
+        result = ctrl.handle_mouse_up("middle")
+        assert result is False
+
+    def test_on_mouse_action_callback_left(self):
+        actions = []
+        ctrl = GameController(on_mouse_action=actions.append)
+        ctrl.handle_mouse_down(MOUSE_LEFT)
+        assert actions == [ACTION_LEFT_CLICK]
+
+    def test_on_mouse_action_callback_right(self):
+        actions = []
+        ctrl = GameController(on_mouse_action=actions.append)
+        ctrl.handle_mouse_down(MOUSE_RIGHT)
+        assert actions == [ACTION_RIGHT_CLICK]
+
+    def test_mouse_up_does_not_fire_callback(self):
+        actions = []
+        ctrl = GameController(on_mouse_action=actions.append)
+        ctrl.handle_mouse_down(MOUSE_LEFT)
+        ctrl.handle_mouse_up(MOUSE_LEFT)
+        # Callback only fires on press, not on release
+        assert actions == [ACTION_LEFT_CLICK]
+
+    def test_reset_clears_mouse_state(self):
+        ctrl = GameController()
+        ctrl.handle_mouse_down(MOUSE_LEFT)
+        ctrl.handle_mouse_down(MOUSE_RIGHT)
+        ctrl.reset()
+        assert ctrl.left_button_pressed is False
+        assert ctrl.right_button_pressed is False
+
+    @pytest.mark.parametrize("button,action", [
+        (MOUSE_LEFT,  ACTION_LEFT_CLICK),
+        (MOUSE_RIGHT, ACTION_RIGHT_CLICK),
+    ])
+    def test_action_constants(self, button, action):
+        actions = []
+        ctrl = GameController(on_mouse_action=actions.append)
+        ctrl.handle_mouse_down(button)
+        assert actions[-1] == action

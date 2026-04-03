@@ -52,6 +52,9 @@ from src.signal_processor import (
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Dot movement speed in pixels per second
+DOT_SPEED = 200
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Kivy layout (KV string) – loaded once at startup
 # ──────────────────────────────────────────────────────────────────────────────
@@ -107,6 +110,10 @@ class ScanScreen(Screen):
     def skip_to_keyboard(self) -> None:
         """Continue in keyboard-only mode (no Muse required)."""
         App.get_running_app().root.current = "game"
+
+    def go_to_test(self) -> None:
+        """Open the interactive test screen."""
+        App.get_running_app().root.current = "test"
 
     def _update_status(self, msg: str) -> None:
         self.status_text = msg
@@ -229,6 +236,140 @@ class GameScreen(Screen):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Screen: Test
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestScreen(Screen):
+    """Interactive test screen – control a blue dot in 2-D screen space.
+
+    Controls
+    --------
+    * **W / ↑** – move dot up
+    * **S / ↓** – move dot down
+    * **A / ←** – move dot left
+    * **D / →** – move dot right
+    * **Left mouse button (LMB)** – dot briefly flashes green (action pulse)
+    * **Right mouse button (RMB)** – dot resets to the centre of the screen
+    """
+
+    dot_x       = NumericProperty(0.0)
+    dot_y       = NumericProperty(0.0)
+    dot_radius  = NumericProperty(20.0)
+    dot_color   = ListProperty([0.2, 0.5, 1.0, 1.0])   # blue
+    left_active  = BooleanProperty(False)
+    right_active = BooleanProperty(False)
+    status_text  = StringProperty(
+        "W/S/↑/↓ – up/down   A/D/←/→ – left/right   LMB – action   RMB – reset"
+    )
+
+    _update_event      = None
+    _color_reset_event = None
+
+    def on_enter(self, *args) -> None:
+        self._keys_held: set[str] = set()
+        Clock.schedule_once(self._init_dot_position, 0)
+        Window.bind(on_key_down=self._on_key_down)
+        Window.bind(on_key_up=self._on_key_up)
+        self._update_event = Clock.schedule_interval(self._tick, 1.0 / 60)
+
+    def on_leave(self, *args) -> None:
+        if self._update_event:
+            self._update_event.cancel()
+            self._update_event = None
+        if self._color_reset_event:
+            self._color_reset_event.cancel()
+            self._color_reset_event = None
+        Window.unbind(on_key_down=self._on_key_down)
+        Window.unbind(on_key_up=self._on_key_up)
+        self._keys_held = set()
+        # Reset controller mouse state
+        App.get_running_app().controller.reset()
+
+    # ── initialisation ─────────────────────────────────────────────────────
+
+    def _init_dot_position(self, dt) -> None:  # noqa: ANN001
+        self.dot_x = Window.width  / 2.0
+        self.dot_y = Window.height / 2.0
+
+    # ── movement tick ──────────────────────────────────────────────────────
+
+    def _tick(self, dt) -> None:  # noqa: ANN001
+        speed = DOT_SPEED * dt
+        r = self.dot_radius
+        keys = self._keys_held
+        if "up" in keys or "w" in keys:
+            self.dot_y = min(self.dot_y + speed, Window.height - r)
+        if "down" in keys or "s" in keys:
+            self.dot_y = max(self.dot_y - speed, r)
+        if "left" in keys or "a" in keys:
+            self.dot_x = max(self.dot_x - speed, r)
+        if "right" in keys or "d" in keys:
+            self.dot_x = min(self.dot_x + speed, Window.width - r)
+
+    # ── keyboard input ─────────────────────────────────────────────────────
+
+    def _on_key_down(self, window, key, scancode, codepoint, modifiers) -> None:  # noqa: ANN001
+        key_name = _keycode_to_name(key, codepoint)
+        if key_name in ("up", "down", "left", "right", "w", "s", "a", "d"):
+            self._keys_held.add(key_name)
+
+    def _on_key_up(self, window, key, *args) -> None:  # noqa: ANN001
+        key_name = _keycode_to_name(key, "")
+        self._keys_held.discard(key_name)
+
+    # ── mouse input ────────────────────────────────────────────────────────
+
+    def on_touch_down(self, touch):
+        # Propagate first so child buttons (e.g. Back) handle their own clicks
+        if super().on_touch_down(touch):
+            return True
+        button = getattr(touch, "button", None)
+        if button == "left":
+            self._handle_left_click(touch)
+        elif button == "right":
+            self._handle_right_click(touch)
+        return True
+
+    def on_touch_up(self, touch):
+        button = getattr(touch, "button", None)
+        if button == "left":
+            self.left_active = False
+            App.get_running_app().controller.handle_mouse_up("left")
+        elif button == "right":
+            self.right_active = False
+            App.get_running_app().controller.handle_mouse_up("right")
+        return super().on_touch_up(touch)
+
+    # ── mouse effects ──────────────────────────────────────────────────────
+
+    def _handle_left_click(self, touch) -> None:
+        """Left-click: dot briefly flashes green (action pulse)."""
+        self.left_active = True
+        App.get_running_app().controller.handle_mouse_down("left")
+        self.dot_color = [0.2, 1.0, 0.4, 1.0]   # flash green
+        self.status_text = f"LMB – action at ({int(touch.x)}, {int(touch.y)})"
+        if self._color_reset_event:
+            self._color_reset_event.cancel()
+        self._color_reset_event = Clock.schedule_once(self._reset_dot_color, 0.3)
+
+    def _handle_right_click(self, touch) -> None:
+        """Right-click: reset dot position to screen centre."""
+        self.right_active = True
+        App.get_running_app().controller.handle_mouse_down("right")
+        self.dot_x = Window.width  / 2.0
+        self.dot_y = Window.height / 2.0
+        self.status_text = "RMB – dot reset to centre"
+
+    def _reset_dot_color(self, dt) -> None:  # noqa: ANN001
+        self.dot_color = [0.2, 0.5, 1.0, 1.0]   # back to blue
+
+    # ── navigation ─────────────────────────────────────────────────────────
+
+    def go_back(self) -> None:
+        App.get_running_app().root.current = "scan"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Main App
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -253,6 +394,7 @@ class NeuroGamingApp(App):
         sm = ScreenManager()
         sm.add_widget(ScanScreen(name="scan"))
         sm.add_widget(GameScreen(name="game"))
+        sm.add_widget(TestScreen(name="test"))
         return sm
 
     def on_stop(self):
@@ -303,6 +445,12 @@ _INLINE_KV = """
             size_hint_y: None
             height: '48dp'
             on_release: root.skip_to_keyboard()
+
+        Button:
+            text: 'Test Screen (dot control)'
+            size_hint_y: None
+            height: '48dp'
+            on_release: root.go_to_test()
 
 <DeviceRow@Button>:
     index: 0
@@ -406,6 +554,53 @@ _INLINE_KV = """
             pos: self.pos
             size: self.size
             radius: [8]
+
+<TestScreen>:
+    canvas.before:
+        Color:
+            rgba: (0.05, 0.05, 0.1, 1)
+        Rectangle:
+            pos: self.pos
+            size: self.size
+        Color:
+            rgba: root.dot_color
+        Ellipse:
+            pos: root.dot_x - root.dot_radius, root.dot_y - root.dot_radius
+            size: root.dot_radius * 2, root.dot_radius * 2
+
+    BoxLayout:
+        orientation: 'vertical'
+        padding: 10
+        spacing: 8
+
+        Label:
+            text: 'Test Screen'
+            font_size: '18sp'
+            size_hint_y: None
+            height: '40dp'
+
+        Widget:
+            size_hint_y: 1
+
+        Label:
+            text: root.status_text
+            font_size: '11sp'
+            size_hint_y: None
+            height: '28dp'
+
+        BoxLayout:
+            size_hint_y: None
+            height: '48dp'
+            spacing: 6
+
+            Label:
+                text: 'LMB: ' + ('ACTIVE' if root.left_active else 'idle')
+            Label:
+                text: 'RMB: ' + ('ACTIVE' if root.right_active else 'idle')
+            Button:
+                text: 'Back'
+                size_hint_x: 0.4
+                on_release: root.go_back()
 """
 
 
