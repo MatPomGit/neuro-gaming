@@ -1,0 +1,108 @@
+name: Build Android APK
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Trigger: manual dispatch only (workflow_dispatch).
+# Optional input allows choosing debug or release mode.
+# ─────────────────────────────────────────────────────────────────────────────
+on:
+  workflow_dispatch:
+    inputs:
+      build_mode:
+        description: "Build mode"
+        required: false
+        default: "debug"
+        type: choice
+        options:
+          - debug
+          - release
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    name: Build APK (${{ github.event.inputs.build_mode || 'debug' }})
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+
+    steps:
+      # ── 1. Check out source ────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Set up Python ──────────────────────────────────────────────────
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      # ── 3. System dependencies required by Buildozer / p4a ────────────────
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            ccache \
+            git \
+            libffi-dev \
+            libssl-dev \
+            zlib1g-dev \
+            libncurses5-dev \
+            libncursesw5-dev \
+            libreadline-dev \
+            libsqlite3-dev \
+            libgdbm-dev \
+            libbz2-dev \
+            libexpat1-dev \
+            liblzma-dev \
+            python3-dev \
+            openjdk-17-jdk \
+            unzip \
+            zip \
+            autoconf \
+            libtool \
+            pkg-config \
+            cmake \
+            ninja-build \
+            lld
+
+      # ── 4. Cache buildozer global directory ───────────────────────────────
+      - name: Cache Buildozer global state
+        uses: actions/cache@v4
+        with:
+          path: ~/.buildozer
+          key: ${{ runner.os }}-buildozer-${{ hashFiles('buildozer.spec') }}
+          restore-keys: |
+            ${{ runner.os }}-buildozer-
+
+      # ── 5. Cache Android SDK / NDK downloads ──────────────────────────────
+      - name: Cache Android SDK / NDK
+        uses: actions/cache@v4
+        with:
+          path: ~/.android
+          key: ${{ runner.os }}-android-sdk-ndk-${{ hashFiles('buildozer.spec') }}
+          restore-keys: |
+            ${{ runner.os }}-android-sdk-ndk-
+
+      # ── 6. Install Buildozer + Cython ─────────────────────────────────────
+      - name: Install Buildozer and Cython
+        run: |
+          python -m pip install --upgrade pip wheel
+          pip install buildozer cython
+
+      # ── 7. Build the APK ──────────────────────────────────────────────────
+      - name: Build APK
+        env:
+          # Ensure ccache is used for faster rebuilds
+          USE_SDK_WRAPPER: 1
+        run: |
+          buildozer android ${{ github.event.inputs.build_mode || 'debug' }}
+
+      # ── 8. Upload APK artifact ────────────────────────────────────────────
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: neuro-gaming-${{ github.event.inputs.build_mode || 'debug' }}-apk
+          path: bin/*.apk
+          if-no-files-found: error
+          retention-days: 30

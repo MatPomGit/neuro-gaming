@@ -1,0 +1,251 @@
+#: kivy 2.3.0
+# neuro_gaming.kv – Layout for the NeuroGaming Muse S Athena controller app
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Reusable widgets
+# ─────────────────────────────────────────────────────────────────────────────
+
+<DirectionButton@Label>:
+    label: ''
+    active: False
+    text: self.label
+    font_size: '36sp'
+    bold: True
+    halign: 'center'
+    valign: 'middle'
+    color: (1, 1, 1, 1)
+    canvas.before:
+        Color:
+            rgba: (0.18, 0.55, 1.0, 1.0) if self.active else (0.18, 0.18, 0.25, 1.0)
+        RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: [12]
+
+<BandBar@BoxLayout>:
+    channel: ''
+    band: 'alpha'
+    value: 0.0
+    orientation: 'vertical'
+    spacing: 2
+    Label:
+        text: root.channel + ' ' + root.band
+        font_size: '9sp'
+        size_hint_y: None
+        height: '14dp'
+        color: (0.7, 0.7, 0.7, 1)
+        halign: 'center'
+    ProgressBar:
+        value: root.value * 100
+        max: 100
+
+<DeviceRow@Button>:
+    index: 0
+    size_hint_y: None
+    height: '44dp'
+    background_color: (0.15, 0.15, 0.22, 1)
+    color: (0.9, 0.9, 1.0, 1)
+    on_release: app.root.get_screen('scan').connect_device(self.index)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Scan / Connect Screen
+# ─────────────────────────────────────────────────────────────────────────────
+
+<ScanScreen>:
+    canvas.before:
+        Color:
+            rgba: (0.08, 0.08, 0.14, 1)
+        Rectangle:
+            pos: self.pos
+            size: self.size
+
+    BoxLayout:
+        orientation: 'vertical'
+        padding: [24, 32, 24, 24]
+        spacing: 14
+
+        # Header
+        Label:
+            text: 'NeuroGaming'
+            font_size: '28sp'
+            bold: True
+            size_hint_y: None
+            height: '48dp'
+            color: (0.4, 0.75, 1.0, 1)
+
+        Label:
+            text: 'Muse S Athena Controller'
+            font_size: '14sp'
+            size_hint_y: None
+            height: '28dp'
+            color: (0.65, 0.65, 0.8, 1)
+
+        # Status
+        Label:
+            text: root.status_text
+            font_size: '13sp'
+            size_hint_y: None
+            height: '36dp'
+            color: (0.85, 0.85, 0.85, 1)
+            text_size: self.size
+            halign: 'center'
+            valign: 'middle'
+
+        # Scan button
+        Button:
+            text: 'Scan for Muse Devices'
+            size_hint_y: None
+            height: '50dp'
+            font_size: '15sp'
+            background_color: (0.18, 0.55, 1.0, 1)
+            on_release: root.scan()
+
+        # Device list
+        ScrollView:
+            size_hint_y: 1
+            RecycleView:
+                id: device_list
+                data: [{'text': n, 'index': i} for i, n in enumerate(root.device_names)]
+                viewclass: 'DeviceRow'
+                RecycleBoxLayout:
+                    orientation: 'vertical'
+                    default_size: None, dp(44)
+                    default_size_hint: 1, None
+                    size_hint_y: None
+                    height: self.minimum_height
+
+        # Keyboard-only mode
+        Button:
+            text: 'Continue in keyboard-only mode (no Muse needed)'
+            size_hint_y: None
+            height: '46dp'
+            font_size: '13sp'
+            background_color: (0.25, 0.25, 0.35, 1)
+            on_release: root.skip_to_keyboard()
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Game Screen
+# ─────────────────────────────────────────────────────────────────────────────
+
+<GameScreen>:
+    canvas.before:
+        Color:
+            rgba: (0.08, 0.08, 0.14, 1)
+        Rectangle:
+            pos: self.pos
+            size: self.size
+
+    BoxLayout:
+        orientation: 'vertical'
+        padding: [16, 12, 16, 12]
+        spacing: 10
+
+        # ── Status bar ──
+        BoxLayout:
+            size_hint_y: None
+            height: '36dp'
+            spacing: 8
+            Label:
+                text: ('[color=44aaff][EEG][/color]' if root.connected else '[color=ffaa33][KB][/color]')
+                markup: True
+                size_hint_x: None
+                width: '52dp'
+                font_size: '13sp'
+            Label:
+                text: root.status_text
+                font_size: '13sp'
+                color: (0.85, 0.85, 0.85, 1)
+
+        # ── Directional pad ──
+        GridLayout:
+            cols: 3
+            rows: 3
+            spacing: 8
+            size_hint_y: 0.55
+
+            # Row 1
+            Widget:
+            DirectionButton:
+                label: '▲'
+                active: root.direction == 'FORWARD'
+            Widget:
+
+            # Row 2
+            DirectionButton:
+                label: '◄'
+                active: root.direction == 'LEFT'
+            # Centre: current key label
+            Label:
+                text: root.direction if root.direction != 'NONE' else ''
+                font_size: '11sp'
+                bold: True
+                color: (0.6, 0.6, 0.8, 1)
+                halign: 'center'
+                valign: 'middle'
+            DirectionButton:
+                label: '►'
+                active: root.direction == 'RIGHT'
+
+            # Row 3
+            Widget:
+            DirectionButton:
+                label: '▼'
+                active: root.direction == 'BACKWARD'
+            Widget:
+
+        # ── EEG band-power bars ──
+        BoxLayout:
+            orientation: 'vertical'
+            size_hint_y: 0.22
+            spacing: 4
+
+            Label:
+                text: 'EEG Band Power'
+                font_size: '11sp'
+                bold: True
+                size_hint_y: None
+                height: '18dp'
+                color: (0.65, 0.65, 0.8, 1)
+
+            BoxLayout:
+                spacing: 6
+                BandBar:
+                    channel: 'AF7'
+                    band: 'α'
+                    value: root.alpha_left
+                BandBar:
+                    channel: 'AF8'
+                    band: 'α'
+                    value: root.alpha_right
+                BandBar:
+                    channel: 'AF7'
+                    band: 'β'
+                    value: root.beta_left
+                BandBar:
+                    channel: 'AF8'
+                    band: 'β'
+                    value: root.beta_right
+
+        # ── Control buttons ──
+        BoxLayout:
+            size_hint_y: None
+            height: '46dp'
+            spacing: 8
+
+            Button:
+                text: 'Stop Calib' if root.is_calibrating else 'Calibrate'
+                font_size: '12sp'
+                background_color: (0.8, 0.4, 0.1, 1) if root.is_calibrating else (0.18, 0.55, 1.0, 1)
+                on_release: root.toggle_calibration()
+
+            Button:
+                text: 'Mode: ' + root.key_mode
+                font_size: '12sp'
+                background_color: (0.25, 0.25, 0.35, 1)
+                on_release: root.toggle_key_mode()
+
+            Button:
+                text: 'Disconnect'
+                font_size: '12sp'
+                background_color: (0.6, 0.15, 0.15, 1)
+                on_release: root.disconnect()

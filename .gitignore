@@ -1,0 +1,27 @@
+# Python byte-compiled files
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Buildozer / Android build artifacts
+.buildozer/
+bin/
+*.apk
+*.aab
+
+# Kivy
+*.pyc
+
+# Pytest cache
+.pytest_cache/
+
+# Editor / OS
+.DS_Store
+.idea/
+*.swp
+*.swo
