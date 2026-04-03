@@ -90,7 +90,14 @@ jobs:
           python -m pip install --upgrade pip wheel
           pip install buildozer cython
 
-      # ── 7. Build the APK ──────────────────────────────────────────────────
+      # ── 7. Accept Android SDK licenses ────────────────────────────────────
+      - name: Accept Android SDK licenses
+        run: |
+          mkdir -p ~/.android
+          touch ~/.android/repositories.cfg
+          yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --licenses || true
+
+      # ── 8. Build the APK ──────────────────────────────────────────────────
       - name: Build APK
         env:
           # Ensure ccache is used for faster rebuilds
@@ -98,7 +105,7 @@ jobs:
         run: |
           buildozer android ${{ github.event.inputs.build_mode || 'debug' }}
 
-      # ── 8. Upload APK artifact ────────────────────────────────────────────
+      # ── 9. Upload APK artifact ────────────────────────────────────────────
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:

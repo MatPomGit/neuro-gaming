@@ -43,6 +43,9 @@ android.sdk       = 33
 
 android.arch = arm64-v8a
 
+# Automatically accept Android SDK licenses
+android.accept_sdk_license = True
+
 # Enable Bluetooth features
 android.features = android.hardware.bluetooth_le
 
