@@ -19,6 +19,16 @@ Keyboard mapping
 +----------+---------+---------+
 | NONE     | (none)  | (none)  |
 +----------+---------+---------+
+
+Mouse button mapping
+--------------------
++-------------+------------------+
+| Button      | Action constant  |
++=============+==================+
+| Left (LMB)  | ``"left_click"`` |
++-------------+------------------+
+| Right (RMB) | ``"right_click"``|
++-------------+------------------+
 """
 
 import logging
@@ -34,6 +44,14 @@ from src.signal_processor import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Mouse button constants
+MOUSE_LEFT  = "left"
+MOUSE_RIGHT = "right"
+
+# Action constants emitted by mouse button events
+ACTION_LEFT_CLICK  = "left_click"
+ACTION_RIGHT_CLICK = "right_click"
 
 # Maps a direction constant to (arrow_key, wasd_key)
 KEY_MAP: dict[str, tuple[str, str]] = {
@@ -62,19 +80,32 @@ class GameController:
     on_direction_change:
         Optional callback ``(new_direction: str) -> None`` invoked
         whenever the active direction changes.
+    left_button_pressed:
+        ``True`` while the left mouse button is held down.
+    right_button_pressed:
+        ``True`` while the right mouse button is held down.
+    on_mouse_action:
+        Optional callback ``(action: str) -> None`` invoked on each
+        mouse button press.  *action* is one of ``ACTION_LEFT_CLICK``
+        or ``ACTION_RIGHT_CLICK``.
     """
 
     def __init__(
         self,
         on_direction_change: Optional[Callable[[str], None]] = None,
         key_mode: str = "arrow",
+        on_mouse_action: Optional[Callable[[str], None]] = None,
     ) -> None:
         self.current_direction: str = DIRECTION_NONE
         self.key_mode = key_mode
         self.on_direction_change = on_direction_change
+        self.on_mouse_action = on_mouse_action
 
         self._pending_direction: str = DIRECTION_NONE
         self._pending_count: int = 0
+
+        self.left_button_pressed: bool = False
+        self.right_button_pressed: bool = False
 
     # ── public API ─────────────────────────────────────────────────────────
 
@@ -120,6 +151,8 @@ class GameController:
         self.current_direction = DIRECTION_NONE
         self._pending_direction = DIRECTION_NONE
         self._pending_count = 0
+        self.left_button_pressed = False
+        self.right_button_pressed = False
 
     # ── keyboard input handler ─────────────────────────────────────────────
 
@@ -151,6 +184,58 @@ class GameController:
         direction = _key_to_direction(key)
         if direction is not None and direction == self.current_direction:
             self.set_direction(DIRECTION_NONE)
+            return True
+        return False
+
+    # ── mouse input handler ────────────────────────────────────────────────
+
+    def handle_mouse_down(self, button: str) -> bool:
+        """Handle a mouse button press event.
+
+        Parameters
+        ----------
+        button:
+            Mouse button name: ``"left"`` or ``"right"``
+            (use :data:`MOUSE_LEFT` / :data:`MOUSE_RIGHT`).
+
+        Returns
+        -------
+        bool:
+            ``True`` if the button was handled, ``False`` otherwise.
+        """
+        if button == MOUSE_LEFT:
+            self.left_button_pressed = True
+            logger.debug("Mouse left button pressed")
+            if self.on_mouse_action:
+                self.on_mouse_action(ACTION_LEFT_CLICK)
+            return True
+        if button == MOUSE_RIGHT:
+            self.right_button_pressed = True
+            logger.debug("Mouse right button pressed")
+            if self.on_mouse_action:
+                self.on_mouse_action(ACTION_RIGHT_CLICK)
+            return True
+        return False
+
+    def handle_mouse_up(self, button: str) -> bool:
+        """Handle a mouse button release event.
+
+        Parameters
+        ----------
+        button:
+            Mouse button name: ``"left"`` or ``"right"``
+            (use :data:`MOUSE_LEFT` / :data:`MOUSE_RIGHT`).
+
+        Returns
+        -------
+        bool:
+            ``True`` if the button was handled, ``False`` otherwise.
+        """
+        if button == MOUSE_LEFT:
+            self.left_button_pressed = False
+            return True
+        if button == MOUSE_RIGHT:
+            self.right_button_pressed = False
             return True
         return False
 

@@ -123,6 +123,15 @@
             background_color: (0.25, 0.25, 0.35, 1)
             on_release: root.skip_to_keyboard()
 
+        # Test screen
+        Button:
+            text: 'Test Screen – control blue dot'
+            size_hint_y: None
+            height: '46dp'
+            font_size: '13sp'
+            background_color: (0.1, 0.45, 0.2, 1)
+            on_release: root.go_to_test()
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Game Screen
 # ─────────────────────────────────────────────────────────────────────────────
@@ -249,3 +258,97 @@
                 font_size: '12sp'
                 background_color: (0.6, 0.15, 0.15, 1)
                 on_release: root.disconnect()
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Test Screen
+# ─────────────────────────────────────────────────────────────────────────────
+
+<TestScreen>:
+    # Dark background + movable blue dot drawn behind all children
+    canvas.before:
+        Color:
+            rgba: (0.05, 0.05, 0.1, 1)
+        Rectangle:
+            pos: self.pos
+            size: self.size
+        Color:
+            rgba: root.dot_color
+        Ellipse:
+            pos: root.dot_x - root.dot_radius, root.dot_y - root.dot_radius
+            size: root.dot_radius * 2, root.dot_radius * 2
+
+    BoxLayout:
+        orientation: 'vertical'
+        padding: [16, 12, 16, 12]
+        spacing: 8
+
+        # ── Title bar ──
+        Label:
+            text: 'Test Screen'
+            font_size: '20sp'
+            bold: True
+            size_hint_y: None
+            height: '40dp'
+            color: (0.4, 0.75, 1.0, 1)
+            halign: 'center'
+
+        # ── Play area (transparent – dot shows through) ──
+        Widget:
+            size_hint_y: 1
+
+        # ── Instructions ──
+        Label:
+            text: 'W/S/\u2191/\u2193 \u2013 move up/down     A/D/\u2190/\u2192 \u2013 move left/right'
+            font_size: '10sp'
+            size_hint_y: None
+            height: '20dp'
+            color: (0.5, 0.5, 0.7, 1)
+            halign: 'center'
+
+        Label:
+            text: 'LMB \u2013 action flash     RMB \u2013 reset position'
+            font_size: '10sp'
+            size_hint_y: None
+            height: '20dp'
+            color: (0.5, 0.5, 0.7, 1)
+            halign: 'center'
+
+        # ── Status ──
+        Label:
+            text: root.status_text
+            font_size: '11sp'
+            size_hint_y: None
+            height: '26dp'
+            color: (0.85, 0.85, 0.85, 1)
+            halign: 'center'
+            text_size: self.size
+            valign: 'middle'
+
+        # ── Mouse-button state + Back button ──
+        BoxLayout:
+            size_hint_y: None
+            height: '46dp'
+            spacing: 8
+
+            Label:
+                text: 'LMB: ' + ('[color=33ff66]ACTIVE[/color]' if root.left_active else '[color=666688]idle[/color]')
+                markup: True
+                font_size: '13sp'
+                bold: True
+                halign: 'center'
+                valign: 'middle'
+
+            Label:
+                text: 'RMB: ' + ('[color=ff5555]ACTIVE[/color]' if root.right_active else '[color=666688]idle[/color]')
+                markup: True
+                font_size: '13sp'
+                bold: True
+                halign: 'center'
+                valign: 'middle'
+
+            Button:
+                text: '\u2190 Back'
+                font_size: '13sp'
+                size_hint_x: 0.4
+                background_color: (0.25, 0.25, 0.35, 1)
+                on_release: root.go_back()
