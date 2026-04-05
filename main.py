@@ -276,7 +276,7 @@ class GameScreen(Screen):
         else:
             app.processor.start_calibration()
             self.is_calibrating = True
-            self.status_text = "Calibrating… sit still with eyes open (5–10 s)."
+            self.status_text = "Calibrating… sit still with eyes open (5–10 seconds)."
 
     def toggle_key_mode(self) -> None:
         app = App.get_running_app()
