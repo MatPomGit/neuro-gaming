@@ -51,11 +51,26 @@ from src.signal_processor import (
     SignalProcessor,
 )
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s  %(levelname)-8s  %(name)s: %(message)s",
+    datefmt="%H:%M:%S",
+)
 logger = logging.getLogger(__name__)
+
+__version__ = "1.0.0"
 
 # Dot movement speed in pixels per second
 DOT_SPEED = 200
+
+# Human-readable direction labels shown in the status bar
+_DIR_LABELS: dict[str, str] = {
+    DIRECTION_NONE:     "Awaiting signal…",
+    DIRECTION_FORWARD:  "Forward",
+    DIRECTION_BACKWARD: "Backward",
+    DIRECTION_LEFT:     "Left",
+    DIRECTION_RIGHT:    "Right",
+}
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Kivy layout (KV string) – loaded once at startup
@@ -175,6 +190,12 @@ class GameScreen(Screen):
     beta_left   = NumericProperty(0.0)
     beta_right  = NumericProperty(0.0)
 
+    # Signal quality per channel (0–1); 1 = excellent contact
+    quality_tp9  = NumericProperty(0.0)
+    quality_af7  = NumericProperty(0.0)
+    quality_af8  = NumericProperty(0.0)
+    quality_tp10 = NumericProperty(0.0)
+
     _update_event = None
 
     def on_enter(self, *args):
@@ -207,11 +228,17 @@ class GameScreen(Screen):
             self.metrics = {k: dict(v) for k, v in m.items()}
             self._update_bars(m)
 
+            # Refresh per-channel signal quality
+            sq = app.processor.get_signal_quality()
+            self.quality_tp9  = sq.get("TP9",  0.0)
+            self.quality_af7  = sq.get("AF7",  0.0)
+            self.quality_af8  = sq.get("AF8",  0.0)
+            self.quality_tp10 = sq.get("TP10", 0.0)
+
         self.direction = app.controller.current_direction
-        self.status_text = (
-            f"{'[EEG] ' if app.connector.is_connected else '[Keyboard] '}"
-            f"Direction: {self.direction}"
-        )
+        tag = "[EEG]" if app.connector.is_connected else "[KB]"
+        label = _DIR_LABELS.get(self.direction, self.direction)
+        self.status_text = f"{tag}  {label}"
 
     def _update_bars(self, m: dict) -> None:
         """Normalise band powers to 0–1 for UI progress bars."""
@@ -245,11 +272,11 @@ class GameScreen(Screen):
         if self.is_calibrating:
             app.processor.stop_calibration()
             self.is_calibrating = False
-            self.status_text = "Calibration complete."
+            self.status_text = "Calibration complete — baseline saved."
         else:
             app.processor.start_calibration()
             self.is_calibrating = True
-            self.status_text = "Calibrating… sit still with eyes open."
+            self.status_text = "Calibrating… sit still with eyes open (5–10 seconds)."
 
     def toggle_key_mode(self) -> None:
         app = App.get_running_app()
@@ -409,6 +436,8 @@ class TestScreen(Screen):
 
 class NeuroGamingApp(App):
     """Root Kivy application."""
+
+    version = StringProperty(__version__)
 
     def build(self):
         # Core objects shared across screens

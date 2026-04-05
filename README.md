@@ -1,5 +1,10 @@
 # NeuroGaming – Muse S Athena Controller
 
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Tests](https://github.com/MatPomGit/neuro-gaming/actions/workflows/tests.yml/badge.svg)](https://github.com/MatPomGit/neuro-gaming/actions/workflows/tests.yml)
+[![Build APK](https://github.com/MatPomGit/neuro-gaming/actions/workflows/build-apk.yml/badge.svg)](https://github.com/MatPomGit/neuro-gaming/actions/workflows/build-apk.yml)
+
 A Python / [Kivy](https://kivy.org) mobile application that lets you control
 a game using EEG signals from the
 [Muse S Athena](https://choosemuse.com/muse-s/) headband via Bluetooth Low
@@ -16,7 +21,8 @@ Energy (BLE).  The app also supports conventional keyboard/touch input
 | **Muse S Athena BLE** | Direct BLE connection via [`bleak`](https://bleak.readthedocs.io) |
 | **Keyboard fallback** | Arrow keys **and** WASD supported simultaneously |
 | **Live visualisation** | Real-time alpha / beta band-power bars per channel |
-| **Calibration** | Per-session baseline recording for better classification |
+| **Signal quality** | Per-channel electrode contact quality (TP9 / AF7 / AF8 / TP10) |
+| **Calibration** | Per-session baseline recording for better signal classification |
 | **Android APK** | Built with [Buildozer](https://buildozer.readthedocs.io); CI via GitHub Actions |
 
 ---
@@ -50,6 +56,7 @@ neuro-gaming/
 ├── requirements.txt          # Python dependencies
 └── .github/
     └── workflows/
+        ├── tests.yml         # Automated test CI (runs on every push / PR)
         └── build-apk.yml     # Manual APK build workflow
 ```
 
@@ -140,6 +147,26 @@ The APK is placed in the `bin/` directory.
 │  asyncio event loop │ bleak BLE client      │
 └─────────────────────────────────────────────┘
 ```
+
+---
+
+## Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| No Muse devices found | BLE adapter off or no permission | Enable Bluetooth; grant Location permission on Android |
+| Signal quality stays red | Electrode not touching skin | Adjust headband; ensure good scalp contact |
+| Direction stays "Awaiting signal…" | Buffer not yet full (< 1 s) | Wait ~1 s after connecting before using the app |
+| Erratic directions | No calibration | Press **Calibrate**, sit still for 5–10 s, then **Stop Calibration** |
+
+---
+
+## Contributing
+
+1. Fork the repository and create a feature branch.
+2. Install development dependencies: `pip install -r requirements.txt`
+3. Run the test suite before and after your changes: `pytest tests/ -v`
+4. Open a pull request with a clear description of the change.
 
 ---
 

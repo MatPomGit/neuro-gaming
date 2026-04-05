@@ -66,6 +66,37 @@
                 pos: self.pos
                 size: self.width * root.value, self.height
 
+<QualityBar@BoxLayout>:
+    channel: ''
+    quality: 0.0
+    orientation: 'vertical'
+    spacing: 2
+    Label:
+        text: root.channel
+        font_size: '9sp'
+        size_hint_y: None
+        height: '20dp'
+        color: (0.7, 0.7, 0.7, 1)
+        halign: 'center'
+    Widget:
+        canvas:
+            # Track background
+            Color:
+                rgba: (0.1, 0.1, 0.15, 1)
+            RoundedRectangle:
+                pos: self.pos
+                size: self.size
+                radius: [4]
+            # Fill: red → yellow → green based on quality
+            Color:
+                r: max(0.0, 1.0 - root.quality * 2.0)
+                g: min(1.0, root.quality * 2.0) * 0.85
+                b: 0.05
+                a: 1.0
+            Rectangle:
+                pos: self.pos
+                size: self.width * root.quality, self.height
+
 <DeviceRow@Button>:
     index: 0
     size_hint_y: None
@@ -101,7 +132,7 @@
             color: (0.4, 0.75, 1.0, 1)
 
         Label:
-            text: 'Muse S Athena Controller'
+            text: 'Muse S Athena Controller  •  v' + app.version
             font_size: '14sp'
             size_hint_y: None
             height: '28dp'
@@ -198,7 +229,7 @@
             cols: 3
             rows: 3
             spacing: 8
-            size_hint_y: 0.55
+            size_hint_y: 0.48
 
             # Row 1
             Widget:
@@ -233,7 +264,7 @@
         # ── EEG band-power bars ──
         BoxLayout:
             orientation: 'vertical'
-            size_hint_y: 0.22
+            size_hint_y: 0.17
             spacing: 4
 
             Label:
@@ -263,6 +294,35 @@
                     band: 'β'
                     value: root.beta_right
 
+        # ── Signal quality indicators ──
+        BoxLayout:
+            orientation: 'vertical'
+            size_hint_y: 0.12
+            spacing: 4
+
+            Label:
+                text: 'Signal Quality'
+                font_size: '11sp'
+                bold: True
+                size_hint_y: None
+                height: '18dp'
+                color: (0.65, 0.65, 0.8, 1)
+
+            BoxLayout:
+                spacing: 6
+                QualityBar:
+                    channel: 'TP9'
+                    quality: root.quality_tp9
+                QualityBar:
+                    channel: 'AF7'
+                    quality: root.quality_af7
+                QualityBar:
+                    channel: 'AF8'
+                    quality: root.quality_af8
+                QualityBar:
+                    channel: 'TP10'
+                    quality: root.quality_tp10
+
         # ── Control buttons ──
         BoxLayout:
             size_hint_y: None
@@ -270,7 +330,7 @@
             spacing: 8
 
             Button:
-                text: 'Stop Calib' if root.is_calibrating else 'Calibrate'
+                text: 'Stop Calibration' if root.is_calibrating else 'Calibrate'
                 font_size: '12sp'
                 background_color: (0.8, 0.4, 0.1, 1) if root.is_calibrating else (0.18, 0.55, 1.0, 1)
                 on_release: root.toggle_calibration()
