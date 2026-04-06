@@ -165,9 +165,16 @@ class ScanScreen(Screen):
         self.status_text = status
         self.is_scanning = False
         self.fsm_state = "FOUND" if device_names and device_names[0] != "No Muse devices found." else "IDLE"
-        if app := App.get_running_app():
+        app = App.get_running_app()
+        if app:
             if device_names and device_names[0] != "No Muse devices found.":
                 app.play_found_sound()
+                # Automatyczne podłączenie, jeśli znaleziono dokładnie jedno urządzenie Muse
+                if len(app.connector.devices) == 1:
+                    self._update_status("SINGLE DEVICE DETECTED. AUTO-CONNECTING...")
+                    self.connect_device(0)
+                elif len(app.connector.devices) > 1:
+                    self._update_status("MULTIPLE DEVICES DETECTED. PLEASE SELECT MANUALLY.")
         self.scan_pulse = 1.0
 
     def connect_device(self, index: int) -> None:
