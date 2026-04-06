@@ -17,6 +17,8 @@ import logging
 import os
 import struct
 import threading
+import time
+from datetime import datetime
 from collections.abc import Callable
 from typing import Optional
 
@@ -265,6 +267,10 @@ class MuseConnector:
         }
 
         self.devices: list[BLEDevice] = []
+        
+        # Debug logging to file
+        self._debug_log_path = os.path.join(os.getcwd(), "eeg_debug.log")
+        logger.info("EEG debug log path: %s", self._debug_log_path)
 
     # ── lifecycle ──────────────────────────────────────────────────────────
 
@@ -307,7 +313,8 @@ class MuseConnector:
         future = asyncio.run_coroutine_threadsafe(
             self._async_connect(device), self._loop
         )
-        future.result(timeout=15)
+        # Increased timeout for Windows service discovery and retries
+        future.result(timeout=30)
 
     def disconnect(self) -> None:
         """Stop EEG streaming and disconnect from the device."""
@@ -381,40 +388,103 @@ class MuseConnector:
         self._on_status(f"Found {len(found)} Muse device(s)")
 
     async def _async_connect(self, device: BLEDevice) -> None:
-        self._on_status(f"Connecting to {device.name}…")
+        device_name = getattr(device, "name", "Muse") or "Muse"
+        device_address = getattr(device, "address", str(device))
+        
+        self._on_status(f"Connecting to {device_name}…")
         # Use address instead of BLEDevice object for better stability on Windows
-        self._client = BleakClient(device.address)
+        self._client = BleakClient(device_address)
         
         try:
-            await self._client.connect()
+            # On Windows, connecting can sometimes be flaky. We try to connect 
+            # and verify the session stays active.
+            try:
+                await self._client.connect()
+            except Exception as e:
+                logger.warning("Initial connection failed: %s. Retrying in 1s...", e)
+                await asyncio.sleep(1.0)
+                await self._client.connect()
+            
+            if not self._client.is_connected:
+                logger.warning("Connection established but immediately lost. Retrying...")
+                await asyncio.sleep(1.0)
+                await self._client.connect()
+
             self._connected = True
-            device_name = device.name or "Muse device"
+            device_name = getattr(device, "name", "Muse") or "Muse"
+            device_address = getattr(device, "address", str(device))
+            
             self._device_state.update({
                 "device_name": device_name,
-                "address": device.address,
+                "address": device_address,
                 "rssi": getattr(device, "rssi", None),
                 "streaming": False,
             })
-            self._on_status(f"Connected to {device.name}")
+            self._on_status(f"Connected to {device_name}")
+            self._store.save(device_address, device_name)
 
-            # Remember this device for future auto-connect
-            self._store.save(device.address, device_name)
-            logger.info("Saved known device: %s (%s)", device_name, device.address)
+            # Windows-specific: Try to pair if not already paired
+            if os.name == 'nt':
+                try:
+                    logger.info("Verifying pairing status for %s...", device_address)
+                    await self._client.pair()
+                except Exception as e:
+                    logger.debug("Pairing info: %s", e)
+
+            # --- Aggressive Service Discovery ---
+            # Muse devices on Windows often update services AFTER connection.
+            # We wait and retry until the EEG characteristics appear.
+            
+            services_stabilized = False
+            for attempt in range(1, 11):  # Up to 10 attempts (10 seconds)
+                logger.info("Service discovery attempt %d/10...", attempt)
+                
+                # Accessing .services triggers discovery in Bleak
+                current_services = self._client.services
+                all_chars = [ch.uuid.lower() for s in current_services for ch in s.characteristics]
+                
+                # Check if we have at least one EEG characteristic (TP9)
+                if any(uuid.startswith("273e0003") for uuid in all_chars):
+                    logger.info("EEG characteristics discovered after %d attempts!", attempt)
+                    services_stabilized = True
+                    break
+                
+                logger.warning("EEG characteristics not found yet. Discovered so far: %d. Waiting...", len(all_chars))
+                await asyncio.sleep(1.0)
+
+            if not services_stabilized:
+                logger.error("Final check: Discovered UUIDs were: %s", all_chars)
+                raise RuntimeError(
+                    "EEG SENSORS NOT DETECTED. PLEASE PUT THE DEVICE ON YOUR HEAD, "
+                    "ENSURE IT IS POWERED ON, AND PAIRED IN WINDOWS SETTINGS."
+                )
 
             await self._refresh_device_state()
 
-            # Subscribe to EEG notification characteristics
+            # Verify and subscribe to EEG notification characteristics
+            subscribed_count = 0
             for channel, uuid in EEG_UUIDS.items():
-                await self._client.start_notify(
-                    uuid,
-                    self._make_eeg_handler(channel),
-                )
+                # Some Windows drivers might need a small gap between subscriptions
+                await asyncio.sleep(0.15)
+                char = self._client.services.get_characteristic(uuid)
+                if char:
+                    try:
+                        await self._client.start_notify(uuid, self._make_eeg_handler(channel))
+                        subscribed_count += 1
+                        logger.debug("Subscribed to %s", channel)
+                    except Exception as e:
+                        logger.warning("Failed to subscribe to %s: %s", channel, e)
+                else:
+                    logger.warning("Characteristic %s (%s) not found!", channel, uuid)
+
+            if subscribed_count == 0:
+                raise RuntimeError("Failed to subscribe to any EEG channels.")
 
             # Send "start streaming" command
             await self._client.write_gatt_char(CONTROL_UUID, CMD_START)
             self._device_state["streaming"] = True
             self._battery_task = asyncio.create_task(self._battery_poll_loop())
-            self._on_status("EEG streaming started")
+            self._on_status(f"Streaming: {subscribed_count} channels")
         except Exception as exc:
             logger.error("Connection failed: %s", exc)
             self._connected = False
@@ -464,9 +534,19 @@ class MuseConnector:
         """Return a BLE notification callback bound to *channel*."""
 
         def handler(sender, data: bytearray) -> None:  # noqa: ANN001
+            # Only process if we are officially in streaming state
+            if not self._device_state.get("streaming"):
+                return
+
             try:
                 _, samples = _parse_eeg_packet(bytes(data))
                 self._on_eeg(channel, samples)
+                
+                # Log to file in debug mode
+                if logger.isEnabledFor(logging.DEBUG):
+                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+                    with open(self._debug_log_path, "a") as f:
+                        f.write(f"[{timestamp}] {channel}: {samples}\n")
             except Exception as exc:
                 logger.warning("EEG parse error on %s: %s", channel, exc)
 
@@ -476,17 +556,21 @@ class MuseConnector:
         """Collect additional metadata (battery + available sensors)."""
         if self._client is None:
             return
-        try:
-            services = await self._client.get_services()
-        except Exception as exc:
-            logger.debug("Failed to query GATT services: %s", exc)
-            services = self._client.services
+            
+        services = self._client.services
+        if not services:
+            logger.warning("No GATT services discovered for device.")
+            return
 
         characteristic_uuids = {
             ch.uuid.lower()
             for service in services
             for ch in service.characteristics
         }
+        
+        # Log discovered characteristics for debugging if needed
+        logger.debug("Discovered %d characteristics", len(characteristic_uuids))
+
         sensors = [
             name
             for name, uuids in SENSOR_CHARACTERISTICS.items()
@@ -499,7 +583,11 @@ class MuseConnector:
         if self._client is None or not self._client.is_connected:
             return None
         try:
-            data = await self._client.read_gatt_char(BATTERY_LEVEL_UUID)
+            char = self._client.services.get_characteristic(BATTERY_LEVEL_UUID)
+            if not char:
+                logger.debug("Battery characteristic not found")
+                return None
+            data = await self._client.read_gatt_char(char)
             if not data:
                 return None
             return int(data[0])

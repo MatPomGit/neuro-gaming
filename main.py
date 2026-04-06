@@ -25,9 +25,11 @@ Architecture overview
 import logging
 import math
 import os
+import sys
 import struct
 import tempfile
 import threading
+import time
 import wave
 
 from kivy.animation import Animation
@@ -68,7 +70,45 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-__version__ = "1.0.0"
+# ──────────────────────────────────────────────────────────────────────────────
+# Single Instance Enforcement
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _enforce_single_instance():
+    """Ensure only one instance of the app is running. 
+    If an existing instance is found, it is closed to free up BLE resources.
+    """
+    pid_file = os.path.join(tempfile.gettempdir(), "neuro_gaming.pid")
+    
+    if os.path.exists(pid_file):
+        try:
+            with open(pid_file, "r") as f:
+                old_pid = int(f.read().strip())
+            
+            if old_pid != os.getpid():
+                # On Windows, use taskkill to force close the previous instance
+                if os.name == 'nt':
+                    os.system(f"taskkill /F /PID {old_pid} >nul 2>&1")
+                else:
+                    import signal
+                    os.kill(old_pid, signal.SIGKILL)
+                
+                # Brief pause to allow the OS and BLE stack to clean up
+                time.sleep(1.5)
+        except Exception:
+            # If we can't read the PID or kill the process, just proceed
+            pass
+            
+    try:
+        with open(pid_file, "w") as f:
+            f.write(str(os.getpid()))
+    except Exception:
+        pass
+
+# Execute single instance check before initializing Kivy or BLE
+_enforce_single_instance()
+
+__version__ = "1.2.0"
 
 # Dot movement speed in pixels per second
 DOT_SPEED = 200
@@ -121,6 +161,13 @@ class ScanScreen(Screen):
         app = App.get_running_app()
         app.connector.start()
         app.connector._on_status = self._update_status  # noqa: SLF001
+        
+        # Auto-scan if no device is connected and we are not already scanning
+        if not app.connector.is_connected and not self.is_scanning:
+            Clock.schedule_once(lambda dt: self.scan(), 0.5)
+        # Auto-scan if no device is connected and we are not already scanning
+        if not app.connector.is_connected and not self.is_scanning:
+            Clock.schedule_once(lambda dt: self.scan(), 0.5)
 
     def scan(self) -> None:
         if self.is_scanning:
@@ -198,10 +245,9 @@ class ScanScreen(Screen):
 
     def _do_connect(self, app, device):
         try:
-            # Zamiast całego obiektu przekaż tylko adres i nazwę
-            addr = device.address if hasattr(device, 'address') else device[0]
-            name = device.name if hasattr(device, 'name') else (device[1] if len(device) > 1 else "")
-            app.connector.connect((addr, name))   # teraz connect sam odświeży urządzenie
+            # MuseConnector.connect expects a BLEDevice object based on its signature, 
+            # but inside it uses device.address for Windows stability.
+            app.connector.connect(device)
             Clock.schedule_once(lambda dt: self._connect_done(True))
         except Exception as exc:
             error_msg = str(exc)

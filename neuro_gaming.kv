@@ -91,11 +91,14 @@
 <DeviceRow@Button>:
     index: 0
     size_hint_y: None
-    height: '48dp'
+    height: '60dp'
     background_normal: ''
     background_color: (0.12, 0.12, 0.18, 1)
     color: (0.8, 0.8, 0.9, 1)
-    font_size: '13sp'
+    font_size: '14sp'
+    text_size: self.width - dp(32), None
+    halign: 'center'
+    valign: 'middle'
     canvas.after:
         Color:
             rgba: (1, 1, 1, 0.05)
@@ -118,7 +121,7 @@
 
     BoxLayout:
         orientation: 'vertical'
-        padding: [32, 40, 32, 32]
+        padding: [24, 32, 24, 24]
         spacing: 20
 
         BoxLayout:
@@ -137,107 +140,128 @@
                 color: (0.4, 0.4, 0.5, 1)
                 halign: 'center'
 
-        Label:
-            text: root.status_text.upper()
-            font_size: '12sp'
-            size_hint_y: None
-            height: '30dp'
-            color: (0.7, 0.7, 0.8, 1)
-            halign: 'center'
-
-        Button:
-            text: root.fsm_state if root.is_scanning else 'SCAN FOR DEVICES'
-            size_hint_y: None
-            height: '52dp'
-            font_size: '14sp'
-            bold: True
-            background_normal: ''
-            background_color: (0.18, 0.55, 1.0, 1)
-            opacity: root.scan_pulse
-            on_release: root.scan()
-
-        ScrollView:
-            size_hint_y: 1
-            canvas.before:
-                Color:
-                    rgba: (0, 0, 0, 0.2)
-                Rectangle:
-                    pos: self.pos
-                    size: self.size
-            RecycleView:
-                id: device_list
-                data: [{'text': n, 'index': i} for i, n in enumerate(root.device_names)]
-                viewclass: 'DeviceRow'
-                RecycleBoxLayout:
-                    orientation: 'vertical'
-                    default_size: None, dp(48)
-                    default_size_hint: 1, None
-                    size_hint_y: None
-                    height: self.minimum_height
-
+        # Main horizontal container for Device List and Console
         BoxLayout:
-            size_hint_y: None
-            height: '152dp'
-            orientation: 'vertical'
-            spacing: 8
-            Button:
-                text: 'VIRTUAL KEYBOARD MODE'
-                size_hint_y: None
-                height: '44dp'
-                font_size: '13sp'
-                background_normal: ''
-                background_color: (0.15, 0.15, 0.2, 1)
-                on_release: root.skip_to_keyboard()
-            Button:
-                text: 'OPEN DIAGNOSTICS SCREEN'
-                size_hint_y: None
-                height: '44dp'
-                font_size: '13sp'
-                background_normal: ''
-                background_color: (0.1, 0.35, 0.2, 1)
-                on_release: root.go_to_test()
-            Button:
-                text: 'CLOSE APP'
-                size_hint_y: None
-                height: '44dp'
-                font_size: '13sp'
-                background_normal: ''
-                background_color: (0.45, 0.12, 0.12, 1)
-                on_release: root.close_app()
+            orientation: 'horizontal'
+            spacing: 24
 
-        BoxLayout:
-            orientation: 'vertical'
-            size_hint_y: None
-            height: '120dp'
-            spacing: 4
-            Label:
-                text: 'TERMINAL OUTPUT'
-                font_size: '10sp'
-                bold: True
-                size_hint_y: None
-                height: '18dp'
-                color: (0.5, 0.5, 0.6, 1)
-                halign: 'left'
-                text_size: self.size
-            ScrollView:
-                do_scroll_x: False
-                bar_width: '6dp'
-                canvas.before:
-                    Color:
-                        rgba: (0.06, 0.06, 0.09, 1)
-                    RoundedRectangle:
-                        pos: self.pos
-                        size: self.size
-                        radius: [4]
+            # Left Column: Device Discovery
+            BoxLayout:
+                orientation: 'vertical'
+                spacing: 12
+                size_hint_x: 0.5
+
                 Label:
-                    text: app.console_output if app.console_output else 'No logs yet.'
-                    font_size: '10sp'
-                    color: (0.7, 0.78, 0.85, 1)
-                    halign: 'left'
-                    valign: 'top'
+                    text: root.status_text.upper()
+                    font_size: '11sp'
                     size_hint_y: None
-                    text_size: self.width - dp(10), None
-                    height: max(self.texture_size[1] + dp(10), self.parent.height)
+                    height: '24dp'
+                    color: (0.7, 0.7, 0.8, 1)
+                    halign: 'center'
+
+                Button:
+                    text: root.fsm_state if root.is_scanning else 'SCAN FOR DEVICES'
+                    size_hint_y: None
+                    height: '48dp'
+                    font_size: '13sp'
+                    bold: True
+                    background_normal: ''
+                    background_color: (0.18, 0.55, 1.0, 1)
+                    opacity: root.scan_pulse
+                    on_release: root.scan()
+
+                ScrollView:
+                    size_hint_y: 1
+                    canvas.before:
+                        Color:
+                            rgba: (0, 0, 0, 0.2)
+                        Rectangle:
+                            pos: self.pos
+                            size: self.size
+                    RecycleView:
+                        id: device_list
+                        data: [{'text': n, 'index': i} for i, n in enumerate(root.device_names)]
+                        viewclass: 'DeviceRow'
+                        RecycleBoxLayout:
+                            orientation: 'vertical'
+                            default_size: None, dp(60)
+                            default_size_hint: 1, None
+                            size_hint_y: None
+                            height: self.minimum_height
+
+                BoxLayout:
+                    size_hint_y: None
+                    height: '148dp'
+                    orientation: 'vertical'
+                    spacing: 8
+                    Button:
+                        text: 'VIRTUAL KEYBOARD MODE'
+                        size_hint_y: None
+                        height: '44dp'
+                        font_size: '12sp'
+                        background_normal: ''
+                        background_color: (0.15, 0.15, 0.2, 1)
+                        on_release: root.skip_to_keyboard()
+                    Button:
+                        text: 'OPEN DIAGNOSTICS SCREEN'
+                        size_hint_y: None
+                        height: '44dp'
+                        font_size: '12sp'
+                        background_normal: ''
+                        background_color: (0.1, 0.35, 0.2, 1)
+                        on_release: root.go_to_test()
+                    Button:
+                        text: 'CLOSE APP'
+                        size_hint_y: None
+                        height: '44dp'
+                        font_size: '12sp'
+                        background_normal: ''
+                        background_color: (0.45, 0.12, 0.12, 1)
+                        on_release: root.close_app()
+
+            # Right Column: Terminal Output (Live Console)
+            BoxLayout:
+                orientation: 'vertical'
+                spacing: 8
+                size_hint_x: 0.5
+
+                Label:
+                    text: 'LIVE TERMINAL OUTPUT & BLE DIAGNOSTICS'
+                    font_size: '10sp'
+                    bold: True
+                    size_hint_y: None
+                    height: '24dp'
+                    color: (0.5, 0.5, 0.6, 1)
+                    halign: 'left'
+                    text_size: self.size
+
+                ScrollView:
+                    id: terminal_scroll
+                    do_scroll_x: False
+                    bar_width: '6dp'
+                    scroll_y: 0  # Always scroll to bottom
+                    canvas.before:
+                        Color:
+                            rgba: (0.06, 0.06, 0.09, 1)
+                        RoundedRectangle:
+                            pos: self.pos
+                            size: self.size
+                            radius: [4]
+                        Color:
+                            rgba: (1, 1, 1, 0.03)
+                        Line:
+                            rounded_rectangle: [self.x, self.y, self.width, self.height, 4]
+                            width: 1
+                    Label:
+                        text: app.console_output if app.console_output else 'Waiting for BLE events...'
+                        font_name: 'Roboto'  # Standard mono-ish font
+                        font_size: '10sp'
+                        color: (0.2, 0.8, 0.4, 1)  # Matrix green for terminal feel
+                        halign: 'left'
+                        valign: 'top'
+                        size_hint_y: None
+                        text_size: self.width - dp(16), None
+                        height: max(self.texture_size[1] + dp(16), self.parent.height)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Primary Operational Screen
