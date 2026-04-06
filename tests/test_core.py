@@ -6,6 +6,10 @@ Run with:
     pytest tests/ -v
 """
 
+import sys
+import unittest.mock as mock
+from unittest.mock import MagicMock, patch, call
+
 import numpy as np
 import pytest
 
@@ -25,6 +29,7 @@ from src.game_controller import (
     HYSTERESIS_COUNT,
     MOUSE_LEFT,
     MOUSE_RIGHT,
+    ButtonForwarder,
     GameController,
     _key_to_direction,
 )
@@ -395,3 +400,283 @@ class TestSignalProcessorCalibration:
         proc.add_samples("AF7", signal)
         proc.start_calibration()
         assert proc._calib_samples["AF7"] == []  # noqa: SLF001
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# ButtonForwarder
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _make_pynput_mocks():
+    """Return (mock_kb_module, mock_ms_module, kb_controller, ms_controller)."""
+    kb_ctrl = MagicMock()
+    ms_ctrl = MagicMock()
+
+    mock_kb = MagicMock()
+    mock_kb.Controller.return_value = kb_ctrl
+    mock_kb.Key.up    = "KEY_UP"
+    mock_kb.Key.down  = "KEY_DOWN"
+    mock_kb.Key.left  = "KEY_LEFT"
+    mock_kb.Key.right = "KEY_RIGHT"
+
+    mock_ms = MagicMock()
+    mock_ms.Controller.return_value = ms_ctrl
+    mock_ms.Button.left  = "BTN_LEFT"
+    mock_ms.Button.right = "BTN_RIGHT"
+
+    return mock_kb, mock_ms, kb_ctrl, ms_ctrl
+
+
+def _make_forwarder():
+    """Create a ButtonForwarder backed by pynput mocks."""
+    mock_kb, mock_ms, kb_ctrl, ms_ctrl = _make_pynput_mocks()
+    pynput_mock = MagicMock()
+    pynput_mock.keyboard = mock_kb
+    pynput_mock.mouse    = mock_ms
+
+    with patch.dict(sys.modules, {"pynput": pynput_mock,
+                                  "pynput.keyboard": mock_kb,
+                                  "pynput.mouse": mock_ms}):
+        forwarder = ButtonForwarder()
+    # Patch the internal controllers so tests can inspect calls
+    forwarder._keyboard = kb_ctrl  # noqa: SLF001
+    forwarder._mouse    = ms_ctrl  # noqa: SLF001
+    forwarder._Key      = mock_kb.Key  # noqa: SLF001
+    forwarder._Button   = mock_ms.Button  # noqa: SLF001
+    return forwarder, kb_ctrl, ms_ctrl
+
+
+class TestButtonForwarder:
+    def test_available_when_pynput_loaded(self):
+        forwarder, _, _ = _make_forwarder()
+        assert forwarder.available is True
+
+    def test_unavailable_when_pynput_missing(self):
+        with patch.dict(sys.modules, {"pynput": None}):
+            # Force ImportError by removing the module
+            saved = sys.modules.pop("pynput", None)
+            try:
+                forwarder = ButtonForwarder()
+                # pynput absent → unavailable
+                assert forwarder.available is False
+            finally:
+                if saved is not None:
+                    sys.modules["pynput"] = saved
+
+    def test_press_direction_arrow_forward(self):
+        forwarder, kb_ctrl, _ = _make_forwarder()
+        forwarder.press_direction(DIRECTION_FORWARD, key_mode="arrow")
+        kb_ctrl.press.assert_called_once_with("KEY_UP")
+
+    def test_press_direction_arrow_backward(self):
+        forwarder, kb_ctrl, _ = _make_forwarder()
+        forwarder.press_direction(DIRECTION_BACKWARD, key_mode="arrow")
+        kb_ctrl.press.assert_called_once_with("KEY_DOWN")
+
+    def test_press_direction_arrow_left(self):
+        forwarder, kb_ctrl, _ = _make_forwarder()
+        forwarder.press_direction(DIRECTION_LEFT, key_mode="arrow")
+        kb_ctrl.press.assert_called_once_with("KEY_LEFT")
+
+    def test_press_direction_arrow_right(self):
+        forwarder, kb_ctrl, _ = _make_forwarder()
+        forwarder.press_direction(DIRECTION_RIGHT, key_mode="arrow")
+        kb_ctrl.press.assert_called_once_with("KEY_RIGHT")
+
+    def test_press_direction_wasd_forward(self):
+        forwarder, kb_ctrl, _ = _make_forwarder()
+        forwarder.press_direction(DIRECTION_FORWARD, key_mode="wasd")
+        kb_ctrl.press.assert_called_once_with("w")
+
+    def test_press_direction_wasd_left(self):
+        forwarder, kb_ctrl, _ = _make_forwarder()
+        forwarder.press_direction(DIRECTION_LEFT, key_mode="wasd")
+        kb_ctrl.press.assert_called_once_with("a")
+
+    def test_press_direction_none_does_nothing(self):
+        forwarder, kb_ctrl, _ = _make_forwarder()
+        forwarder.press_direction(DIRECTION_NONE, key_mode="arrow")
+        kb_ctrl.press.assert_not_called()
+
+    def test_release_direction_arrow(self):
+        forwarder, kb_ctrl, _ = _make_forwarder()
+        forwarder.release_direction(DIRECTION_FORWARD, key_mode="arrow")
+        kb_ctrl.release.assert_called_once_with("KEY_UP")
+
+    def test_release_direction_none_does_nothing(self):
+        forwarder, kb_ctrl, _ = _make_forwarder()
+        forwarder.release_direction(DIRECTION_NONE)
+        kb_ctrl.release.assert_not_called()
+
+    def test_press_mouse_left(self):
+        forwarder, _, ms_ctrl = _make_forwarder()
+        forwarder.press_mouse_button(MOUSE_LEFT)
+        ms_ctrl.press.assert_called_once_with("BTN_LEFT")
+
+    def test_press_mouse_right(self):
+        forwarder, _, ms_ctrl = _make_forwarder()
+        forwarder.press_mouse_button(MOUSE_RIGHT)
+        ms_ctrl.press.assert_called_once_with("BTN_RIGHT")
+
+    def test_release_mouse_left(self):
+        forwarder, _, ms_ctrl = _make_forwarder()
+        forwarder.release_mouse_button(MOUSE_LEFT)
+        ms_ctrl.release.assert_called_once_with("BTN_LEFT")
+
+    def test_release_mouse_right(self):
+        forwarder, _, ms_ctrl = _make_forwarder()
+        forwarder.release_mouse_button(MOUSE_RIGHT)
+        ms_ctrl.release.assert_called_once_with("BTN_RIGHT")
+
+    def test_press_mouse_unknown_does_nothing(self):
+        forwarder, _, ms_ctrl = _make_forwarder()
+        forwarder.press_mouse_button("middle")
+        ms_ctrl.press.assert_not_called()
+
+    def test_release_mouse_unknown_does_nothing(self):
+        forwarder, _, ms_ctrl = _make_forwarder()
+        forwarder.release_mouse_button("middle")
+        ms_ctrl.release.assert_not_called()
+
+    def test_keyboard_exception_does_not_propagate(self):
+        forwarder, kb_ctrl, _ = _make_forwarder()
+        kb_ctrl.press.side_effect = OSError("display unavailable")
+        # Must not raise
+        forwarder.press_direction(DIRECTION_FORWARD, key_mode="arrow")
+
+    def test_mouse_exception_does_not_propagate(self):
+        forwarder, _, ms_ctrl = _make_forwarder()
+        ms_ctrl.press.side_effect = OSError("display unavailable")
+        forwarder.press_mouse_button(MOUSE_LEFT)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# GameController – forwarding_enabled
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _make_controller_with_mock_forwarder(key_mode="arrow", **kwargs):
+    """Return a (GameController, mock_forwarder) pair."""
+    ctrl = GameController(forwarding_enabled=True, key_mode=key_mode, **kwargs)
+    mock_fwd = MagicMock(spec=ButtonForwarder)
+    mock_fwd.available = True
+    ctrl._forwarder = mock_fwd  # noqa: SLF001
+    return ctrl, mock_fwd
+
+
+class TestGameControllerForwarding:
+    def test_forwarding_disabled_by_default(self):
+        ctrl = GameController()
+        assert ctrl.forwarding_enabled is False
+
+    def test_forwarding_enabled_flag(self):
+        ctrl = GameController(forwarding_enabled=True)
+        assert ctrl.forwarding_enabled is True
+
+    def test_set_direction_presses_new_key(self):
+        ctrl, fwd = _make_controller_with_mock_forwarder()
+        ctrl.set_direction(DIRECTION_FORWARD)
+        fwd.press_direction.assert_called_once_with(DIRECTION_FORWARD, "arrow")
+
+    def test_set_direction_releases_previous_key(self):
+        ctrl, fwd = _make_controller_with_mock_forwarder()
+        ctrl.set_direction(DIRECTION_FORWARD)
+        fwd.reset_mock()
+        ctrl.set_direction(DIRECTION_LEFT)
+        fwd.release_direction.assert_called_once_with(DIRECTION_FORWARD, "arrow")
+        fwd.press_direction.assert_called_once_with(DIRECTION_LEFT, "arrow")
+
+    def test_update_presses_key_after_hysteresis(self):
+        ctrl, fwd = _make_controller_with_mock_forwarder()
+        for _ in range(HYSTERESIS_COUNT):
+            ctrl.update(DIRECTION_FORWARD)
+        fwd.press_direction.assert_called_once_with(DIRECTION_FORWARD, "arrow")
+
+    def test_update_does_not_press_before_hysteresis(self):
+        ctrl, fwd = _make_controller_with_mock_forwarder()
+        for _ in range(HYSTERESIS_COUNT - 1):
+            ctrl.update(DIRECTION_FORWARD)
+        fwd.press_direction.assert_not_called()
+
+    def test_direction_change_releases_old_presses_new(self):
+        ctrl, fwd = _make_controller_with_mock_forwarder()
+        for _ in range(HYSTERESIS_COUNT):
+            ctrl.update(DIRECTION_FORWARD)
+        fwd.reset_mock()
+        for _ in range(HYSTERESIS_COUNT):
+            ctrl.update(DIRECTION_BACKWARD)
+        fwd.release_direction.assert_called_once_with(DIRECTION_FORWARD, "arrow")
+        fwd.press_direction.assert_called_once_with(DIRECTION_BACKWARD, "arrow")
+
+    def test_forwarding_uses_wasd_key_mode(self):
+        ctrl, fwd = _make_controller_with_mock_forwarder(key_mode="wasd")
+        ctrl.set_direction(DIRECTION_FORWARD)
+        fwd.press_direction.assert_called_once_with(DIRECTION_FORWARD, "wasd")
+
+    def test_no_forwarding_when_disabled(self):
+        ctrl = GameController(forwarding_enabled=False)
+        mock_fwd = MagicMock(spec=ButtonForwarder)
+        ctrl._forwarder = mock_fwd  # noqa: SLF001
+        ctrl.set_direction(DIRECTION_FORWARD)
+        mock_fwd.press_direction.assert_not_called()
+        mock_fwd.release_direction.assert_not_called()
+
+    def test_mouse_down_forwarded_left(self):
+        ctrl, fwd = _make_controller_with_mock_forwarder()
+        ctrl.handle_mouse_down(MOUSE_LEFT)
+        fwd.press_mouse_button.assert_called_once_with(MOUSE_LEFT)
+
+    def test_mouse_down_forwarded_right(self):
+        ctrl, fwd = _make_controller_with_mock_forwarder()
+        ctrl.handle_mouse_down(MOUSE_RIGHT)
+        fwd.press_mouse_button.assert_called_once_with(MOUSE_RIGHT)
+
+    def test_mouse_up_forwarded_left(self):
+        ctrl, fwd = _make_controller_with_mock_forwarder()
+        ctrl.handle_mouse_up(MOUSE_LEFT)
+        fwd.release_mouse_button.assert_called_once_with(MOUSE_LEFT)
+
+    def test_mouse_up_forwarded_right(self):
+        ctrl, fwd = _make_controller_with_mock_forwarder()
+        ctrl.handle_mouse_up(MOUSE_RIGHT)
+        fwd.release_mouse_button.assert_called_once_with(MOUSE_RIGHT)
+
+    def test_mouse_not_forwarded_when_forwarding_disabled(self):
+        ctrl = GameController(forwarding_enabled=False)
+        mock_fwd = MagicMock(spec=ButtonForwarder)
+        ctrl._forwarder = mock_fwd  # noqa: SLF001
+        ctrl.handle_mouse_down(MOUSE_LEFT)
+        ctrl.handle_mouse_up(MOUSE_LEFT)
+        mock_fwd.press_mouse_button.assert_not_called()
+        mock_fwd.release_mouse_button.assert_not_called()
+
+    def test_reset_releases_held_direction(self):
+        ctrl, fwd = _make_controller_with_mock_forwarder()
+        ctrl.set_direction(DIRECTION_FORWARD)
+        fwd.reset_mock()
+        ctrl.reset()
+        fwd.release_direction.assert_called_once_with(DIRECTION_FORWARD, "arrow")
+
+    def test_reset_releases_held_mouse_buttons(self):
+        ctrl, fwd = _make_controller_with_mock_forwarder()
+        ctrl.handle_mouse_down(MOUSE_LEFT)
+        ctrl.handle_mouse_down(MOUSE_RIGHT)
+        fwd.reset_mock()
+        ctrl.reset()
+        fwd.release_mouse_button.assert_any_call(MOUSE_LEFT)
+        fwd.release_mouse_button.assert_any_call(MOUSE_RIGHT)
+
+    def test_reset_does_not_release_when_forwarding_disabled(self):
+        ctrl = GameController(forwarding_enabled=False)
+        mock_fwd = MagicMock(spec=ButtonForwarder)
+        ctrl._forwarder = mock_fwd  # noqa: SLF001
+        ctrl.set_direction(DIRECTION_FORWARD)
+        ctrl.reset()
+        mock_fwd.release_direction.assert_not_called()
+
+    def test_callback_still_fires_when_forwarding_enabled(self):
+        received = []
+        ctrl, _ = _make_controller_with_mock_forwarder(
+            on_direction_change=received.append
+        )
+        ctrl.set_direction(DIRECTION_RIGHT)
+        assert received == [DIRECTION_RIGHT]
+
