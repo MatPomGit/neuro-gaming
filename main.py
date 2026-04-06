@@ -162,12 +162,16 @@ class ScanScreen(Screen):
             daemon=True
         ).start()
 
-    def _do_connect(self, app, device) -> None:
+    def _do_connect(self, app, device):
         try:
-            app.connector.connect(device)
+            # Zamiast całego obiektu przekaż tylko adres i nazwę
+            addr = device.address if hasattr(device, 'address') else device[0]
+            name = device.name if hasattr(device, 'name') else (device[1] if len(device) > 1 else "")
+            app.connector.connect((addr, name))   # teraz connect sam odświeży urządzenie
             Clock.schedule_once(lambda dt: self._connect_done(True))
         except Exception as exc:
-            Clock.schedule_once(lambda dt: self._connect_done(False, str(exc)))
+            error_msg = str(exc)
+            Clock.schedule_once(lambda dt: self._connect_done(False, error_msg))
 
     def _connect_done(self, success: bool, error_msg: str = "") -> None:
         self.is_scanning = False
