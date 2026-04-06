@@ -1,8 +1,8 @@
 #: kivy 2.3.0
-# neuro_gaming.kv – Profesjonalny interfejs jednostki sterującej Muse S Athena
+# neuro_gaming.kv – Professional Muse S Athena Control Interface
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Współdzielone style i widżety
+# Shared Styles and Widgets
 # ─────────────────────────────────────────────────────────────────────────────
 
 <DirectionButton@Label>:
@@ -15,14 +15,14 @@
     valign: 'middle'
     color: (1, 1, 1, 1)
     canvas.before:
-        # Podświetlenie aktywnego kierunku
+        # Active direction highlight
         Color:
             rgba: (0.18, 0.55, 1.0, 0.3) if self.active else (0, 0, 0, 0)
         RoundedRectangle:
             pos: self.x - 2, self.y - 2
             size: self.width + 4, self.height + 4
             radius: [8]
-        # Tło przycisku
+        # Button background
         Color:
             rgba: (0.18, 0.55, 1.0, 1.0) if self.active else (0.12, 0.12, 0.18, 1.0)
         RoundedRectangle:
@@ -105,7 +105,7 @@
     on_release: app.root.get_screen('scan').connect_device(self.index)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Ekran Skanowania / Konfiguracji
+# Scan / Configuration Screen
 # ─────────────────────────────────────────────────────────────────────────────
 
 <ScanScreen>:
@@ -197,16 +197,8 @@
                 background_color: (0.1, 0.35, 0.2, 1)
                 on_release: root.go_to_test()
 
-        Button:
-            text: 'Instrukcja połączenia i użytkowania'
-            size_hint_y: None
-            height: '46dp'
-            font_size: '13sp'
-            background_color: (0.28, 0.28, 0.45, 1)
-            on_release: root.open_user_guide()
-
 # ─────────────────────────────────────────────────────────────────────────────
-# Ekran Główny Operacyjny
+# Primary Operational Screen
 # ─────────────────────────────────────────────────────────────────────────────
 
 <GameScreen>:
@@ -222,7 +214,7 @@
         padding: [20, 16, 20, 16]
         spacing: 16
 
-        # Pasek Stanu
+        # Status Bar
         BoxLayout:
             size_hint_y: None
             height: '36dp'
@@ -247,7 +239,7 @@
                 color: (0.6, 0.6, 0.7, 1)
                 halign: 'right'
 
-        # Kontrolery Kierunku
+        # Directional Controls
         GridLayout:
             cols: 3
             rows: 3
@@ -280,7 +272,7 @@
                 active: root.direction == 'BACKWARD'
             Widget:
 
-        # Panel Telemetrii
+        # Telemetry Panel
         BoxLayout:
             orientation: 'horizontal'
             size_hint_y: 0.35
@@ -342,38 +334,7 @@
                         channel: 'TP10'
                         quality: root.quality_tp10
 
-<<<<<<< Updated upstream
-        # ── Device state ──
-        BoxLayout:
-            orientation: 'vertical'
-            size_hint_y: 0.13
-            spacing: 2
-
-            Label:
-                text: root.device_text
-                font_size: '11sp'
-                color: (0.7, 0.8, 1, 1)
-                halign: 'left'
-                text_size: self.size
-
-            Label:
-                text: root.battery_text
-                font_size: '11sp'
-                color: (0.8, 0.9, 0.8, 1)
-                halign: 'left'
-                text_size: self.size
-
-            Label:
-                text: root.sensors_text
-                font_size: '10sp'
-                color: (0.75, 0.75, 0.9, 1)
-                halign: 'left'
-                text_size: self.size
-
-        # ── Control buttons ──
-=======
-        # Przyciski Systemowe
->>>>>>> Stashed changes
+        # System Control Interface
         BoxLayout:
             size_hint_y: None
             height: '50dp'
@@ -403,14 +364,8 @@
                 background_color: (0.5, 0.1, 0.1, 1)
                 on_release: root.disconnect()
 
-            Button:
-                text: 'Instrukcja'
-                font_size: '12sp'
-                background_color: (0.3, 0.3, 0.45, 1)
-                on_release: root.open_user_guide()
-
 # ─────────────────────────────────────────────────────────────────────────────
-# Ekran Diagnostyczny
+# Diagnostics Screen
 # ─────────────────────────────────────────────────────────────────────────────
 
 <TestScreen>:
@@ -420,7 +375,7 @@
         Rectangle:
             pos: self.pos
             size: self.size
-        # Siatka techniczna
+        # Technical grid
         Color:
             rgba: (0.18, 0.55, 1, 0.05)
         Line:
@@ -430,7 +385,7 @@
             points: [0, y, self.width, y] for y in range(0, int(self.height), 80)
             width: 1
 
-        # Obiekt testowy (dot)
+        # Test object (dot)
         Color:
             rgba: root.dot_color
         Ellipse:

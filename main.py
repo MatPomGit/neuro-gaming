@@ -70,7 +70,7 @@ DOT_SPEED = 200
 
 # Human-readable direction labels shown in the status bar
 _DIR_LABELS: dict[str, str] = {
-    DIRECTION_NONE:     "Awaiting signal…",
+    DIRECTION_NONE:     "AWAITING SIGNAL...",
     DIRECTION_FORWARD:  "Forward",
     DIRECTION_BACKWARD: "Backward",
     DIRECTION_LEFT:     "Left",
@@ -172,9 +172,10 @@ class ScanScreen(Screen):
     def _connect_done(self, success: bool, error_msg: str = "") -> None:
         self.is_scanning = False
         if success:
-            self.manager.current = "game"
+            app = App.get_running_app()
+            app.root.current = "game"
         else:
-            self.status_text = f"Connection failed: {error_msg}"
+            self.status_text = f"CONNECTION FAILED: {error_msg.upper()}"
 
     def skip_to_keyboard(self) -> None:
         """Continue in keyboard-only mode (no Muse required)."""
@@ -501,11 +502,9 @@ class NeuroGamingApp(App):
         )
         self.controller = GameController(key_mode="arrow")
 
-        # Load KV file if present; otherwise use inline KV string
+        # Load KV file if present
         if os.path.exists(KV_FILE):
             Builder.load_file(KV_FILE)
-        else:
-            Builder.load_string(_INLINE_KV)
 
         sm = ScreenManager(transition=FadeTransition(duration=0.25))
         sm.add_widget(ScanScreen(name="scan"))
@@ -518,28 +517,41 @@ class NeuroGamingApp(App):
 
     def open_user_guide(self) -> None:
         guide_text = (
-            "Instrukcja połączenia i użytkowania\n\n"
-            "1) Uruchom opaskę Muse i załóż ją tak, aby czujniki dobrze "
-            "przylegały do skóry.\n"
-            "2) W aplikacji kliknij 'Scan for Muse Devices', wybierz urządzenie "
-            "z listy i połącz.\n"
-            "3) Po połączeniu sprawdź poziom baterii, jakość sygnału i wykryte "
-            "czujniki w panelu statusu urządzenia.\n"
-            "4) Użyj przycisku 'Calibrate' i pozostań nieruchomo przez kilka "
-            "sekund, aby ustawić punkt odniesienia.\n"
-            "5) Sterowanie działa sygnałem EEG, a w razie potrzeby możesz "
-            "przełączyć się na klawiaturę.\n"
-            "6) Przycisk 'Disconnect' rozłącza opaskę i wraca do ekranu skanowania."
+            "SYSTEM OPERATIONAL GUIDE\n\n"
+            "1) Power on the Muse S headband and ensure all sensors have "
+            "direct skin contact.\n"
+            "2) Click 'SCAN FOR DEVICES', select your device from the list, "
+            "and initialize connection.\n"
+            "3) Once connected, verify battery level, signal quality, and "
+            "sensor health in the telemetry panel.\n"
+            "4) Use 'START CALIBRATION' and remain still for 5-10 seconds "
+            "to establish an EEG baseline.\n"
+            "5) Use concentrated focus (Beta) for FORWARD, and relaxation (Alpha) "
+            "for BACKWARD/LATERAL control.\n"
+            "6) Use 'DISCONNECT' to terminate the session and return to "
+            "the system scan screen."
         )
 
-        content = BoxLayout(orientation="vertical", spacing=8, padding=10)
+        content = BoxLayout(orientation="vertical", spacing=12, padding=16)
+        from kivy.graphics import Color, Rectangle
+        with content.canvas.before:
+            Color(0.08, 0.08, 0.12, 1)
+            content_rect = Rectangle(size=content.size, pos=content.pos)
+        
+        def update_rect(instance, value):
+            content_rect.pos = instance.pos
+            content_rect.size = instance.size
+        content.bind(pos=update_rect, size=update_rect)
+
         scroll = ScrollView()
         lbl = Label(
             text=guide_text,
             halign="left",
             valign="top",
             size_hint_y=None,
-            color=(0.92, 0.92, 0.92, 1),
+            font_size='13sp',
+            line_height=1.2,
+            color=(0.85, 0.85, 0.9, 1),
         )
         lbl.bind(
             width=lambda *_: setattr(lbl, "text_size", (lbl.width, None)),
@@ -548,17 +560,23 @@ class NeuroGamingApp(App):
         scroll.add_widget(lbl)
         content.add_widget(scroll)
         close_btn = Button(
-            text="Zamknij",
+            text="CLOSE",
             size_hint_y=None,
-            height="42dp",
+            height="48dp",
+            font_size='13sp',
+            bold=True,
+            background_normal='',
             background_color=(0.18, 0.55, 1.0, 1),
         )
         content.add_widget(close_btn)
         popup = Popup(
-            title="Instrukcja",
+            title="SYSTEM USER GUIDE",
             content=content,
-            size_hint=(0.86, 0.78),
+            size_hint=(0.85, 0.8),
             auto_dismiss=True,
+            title_size='14sp',
+            title_align='center',
+            separator_color=(0.18, 0.55, 1.0, 1)
         )
         close_btn.bind(on_release=popup.dismiss)
         popup.open()
