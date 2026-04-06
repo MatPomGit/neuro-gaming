@@ -38,6 +38,11 @@ from kivy.properties import (
     NumericProperty,
     StringProperty,
 )
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.button import Button
+from kivy.uix.label import Label
+from kivy.uix.popup import Popup
+from kivy.uix.scrollview import ScrollView
 from kivy.uix.screenmanager import FadeTransition, Screen, ScreenManager
 
 from src.game_controller import GameController
@@ -161,6 +166,9 @@ class ScanScreen(Screen):
         """Open the interactive test screen."""
         App.get_running_app().root.current = "test"
 
+    def open_user_guide(self) -> None:
+        App.get_running_app().open_user_guide()
+
     def _update_status(self, msg: str) -> None:
         self.status_text = msg
 
@@ -195,6 +203,9 @@ class GameScreen(Screen):
     quality_af7  = NumericProperty(0.0)
     quality_af8  = NumericProperty(0.0)
     quality_tp10 = NumericProperty(0.0)
+    battery_text = StringProperty("Battery: --")
+    sensors_text = StringProperty("Sensors: --")
+    device_text = StringProperty("Device: keyboard mode")
 
     _update_event = None
 
@@ -239,6 +250,7 @@ class GameScreen(Screen):
         tag = "[EEG]" if app.connector.is_connected else "[KB]"
         label = _DIR_LABELS.get(self.direction, self.direction)
         self.status_text = f"{tag}  {label}"
+        self._update_device_status(app)
 
     def _update_bars(self, m: dict) -> None:
         """Normalise band powers to 0–1 for UI progress bars."""
@@ -249,6 +261,26 @@ class GameScreen(Screen):
         self.alpha_right = _clamp(m.get("AF8", {}).get("alpha", 0.0))
         self.beta_left   = _clamp(m.get("AF7", {}).get("beta",  0.0))
         self.beta_right  = _clamp(m.get("AF8", {}).get("beta",  0.0))
+
+    def _update_device_status(self, app) -> None:  # noqa: ANN001
+        if not app.connector.is_connected:
+            self.device_text = "Device: keyboard mode"
+            self.battery_text = "Battery: --"
+            self.sensors_text = "Sensors: --"
+            return
+        state = app.connector.device_state
+        battery = state.get("battery_level")
+        battery_value = f"{battery}%" if isinstance(battery, int) else "n/a"
+        sensors = state.get("available_sensors") or []
+        sensor_summary = ", ".join(sensors) if sensors else "unknown"
+        sample_rate = state.get("sample_rate_hz", 0)
+
+        self.device_text = (
+            f"Device: {state.get('device_name', 'Muse')}  "
+            f"({sample_rate} Hz)"
+        )
+        self.battery_text = f"Battery: {battery_value}"
+        self.sensors_text = f"Sensors: {sensor_summary}"
 
     # ── direction callback ─────────────────────────────────────────────────
 
@@ -291,6 +323,9 @@ class GameScreen(Screen):
         app.processor.reset()
         app.controller.reset()
         app.root.current = "scan"
+
+    def open_user_guide(self) -> None:
+        App.get_running_app().open_user_guide()
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -462,6 +497,53 @@ class NeuroGamingApp(App):
 
     def on_stop(self):
         self.connector.stop()
+
+    def open_user_guide(self) -> None:
+        guide_text = (
+            "Instrukcja połączenia i użytkowania\n\n"
+            "1) Uruchom opaskę Muse i załóż ją tak, aby czujniki dobrze "
+            "przylegały do skóry.\n"
+            "2) W aplikacji kliknij 'Scan for Muse Devices', wybierz urządzenie "
+            "z listy i połącz.\n"
+            "3) Po połączeniu sprawdź poziom baterii, jakość sygnału i wykryte "
+            "czujniki w panelu statusu urządzenia.\n"
+            "4) Użyj przycisku 'Calibrate' i pozostań nieruchomo przez kilka "
+            "sekund, aby ustawić punkt odniesienia.\n"
+            "5) Sterowanie działa sygnałem EEG, a w razie potrzeby możesz "
+            "przełączyć się na klawiaturę.\n"
+            "6) Przycisk 'Disconnect' rozłącza opaskę i wraca do ekranu skanowania."
+        )
+
+        content = BoxLayout(orientation="vertical", spacing=8, padding=10)
+        scroll = ScrollView()
+        lbl = Label(
+            text=guide_text,
+            halign="left",
+            valign="top",
+            size_hint_y=None,
+            color=(0.92, 0.92, 0.92, 1),
+        )
+        lbl.bind(
+            width=lambda *_: setattr(lbl, "text_size", (lbl.width, None)),
+            texture_size=lambda *_: setattr(lbl, "height", lbl.texture_size[1]),
+        )
+        scroll.add_widget(lbl)
+        content.add_widget(scroll)
+        close_btn = Button(
+            text="Zamknij",
+            size_hint_y=None,
+            height="42dp",
+            background_color=(0.18, 0.55, 1.0, 1),
+        )
+        content.add_widget(close_btn)
+        popup = Popup(
+            title="Instrukcja",
+            content=content,
+            size_hint=(0.86, 0.78),
+            auto_dismiss=True,
+        )
+        close_btn.bind(on_release=popup.dismiss)
+        popup.open()
 
 
 # ──────────────────────────────────────────────────────────────────────────────
