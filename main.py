@@ -25,7 +25,6 @@ Architecture overview
 import logging
 import math
 import os
-import sys
 import struct
 import tempfile
 import threading
@@ -49,8 +48,8 @@ from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.label import Label
 from kivy.uix.popup import Popup
-from kivy.uix.scrollview import ScrollView
 from kivy.uix.screenmanager import FadeTransition, Screen, ScreenManager
+from kivy.uix.scrollview import ScrollView
 
 from src.game_controller import GameController
 from src.muse_connector import MuseConnector
@@ -162,9 +161,6 @@ class ScanScreen(Screen):
         app.connector.start()
         app.connector._on_status = self._update_status  # noqa: SLF001
         
-        # Auto-scan if no device is connected and we are not already scanning
-        if not app.connector.is_connected and not self.is_scanning:
-            Clock.schedule_once(lambda dt: self.scan(), 0.5)
         # Auto-scan if no device is connected and we are not already scanning
         if not app.connector.is_connected and not self.is_scanning:
             Clock.schedule_once(lambda dt: self.scan(), 0.5)
