@@ -146,7 +146,7 @@
             halign: 'center'
 
         Button:
-            text: 'SCANNING...' if root.is_scanning else 'SCAN FOR DEVICES'
+            text: root.fsm_state if root.is_scanning else 'SCAN FOR DEVICES'
             size_hint_y: None
             height: '52dp'
             font_size: '14sp'
@@ -177,7 +177,7 @@
 
         BoxLayout:
             size_hint_y: None
-            height: '100dp'
+            height: '152dp'
             orientation: 'vertical'
             spacing: 8
             Button:
@@ -196,6 +196,48 @@
                 background_normal: ''
                 background_color: (0.1, 0.35, 0.2, 1)
                 on_release: root.go_to_test()
+            Button:
+                text: 'CLOSE APP'
+                size_hint_y: None
+                height: '44dp'
+                font_size: '13sp'
+                background_normal: ''
+                background_color: (0.45, 0.12, 0.12, 1)
+                on_release: root.close_app()
+
+        BoxLayout:
+            orientation: 'vertical'
+            size_hint_y: None
+            height: '120dp'
+            spacing: 4
+            Label:
+                text: 'TERMINAL OUTPUT'
+                font_size: '10sp'
+                bold: True
+                size_hint_y: None
+                height: '18dp'
+                color: (0.5, 0.5, 0.6, 1)
+                halign: 'left'
+                text_size: self.size
+            ScrollView:
+                do_scroll_x: False
+                bar_width: '6dp'
+                canvas.before:
+                    Color:
+                        rgba: (0.06, 0.06, 0.09, 1)
+                    RoundedRectangle:
+                        pos: self.pos
+                        size: self.size
+                        radius: [4]
+                Label:
+                    text: app.console_output if app.console_output else 'No logs yet.'
+                    font_size: '10sp'
+                    color: (0.7, 0.78, 0.85, 1)
+                    halign: 'left'
+                    valign: 'top'
+                    size_hint_y: None
+                    text_size: self.width - dp(10), None
+                    height: max(self.texture_size[1] + dp(10), self.parent.height)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Primary Operational Screen
@@ -363,6 +405,48 @@
                 background_normal: ''
                 background_color: (0.5, 0.1, 0.1, 1)
                 on_release: root.disconnect()
+
+            Button:
+                text: 'CLOSE APP'
+                font_size: '12sp'
+                bold: True
+                background_normal: ''
+                background_color: (0.45, 0.12, 0.12, 1)
+                on_release: root.close_app()
+
+        BoxLayout:
+            orientation: 'vertical'
+            size_hint_y: None
+            height: '120dp'
+            spacing: 4
+            Label:
+                text: 'TERMINAL OUTPUT'
+                font_size: '10sp'
+                bold: True
+                size_hint_y: None
+                height: '18dp'
+                color: (0.5, 0.5, 0.6, 1)
+                halign: 'left'
+                text_size: self.size
+            ScrollView:
+                do_scroll_x: False
+                bar_width: '6dp'
+                canvas.before:
+                    Color:
+                        rgba: (0.06, 0.06, 0.09, 1)
+                    RoundedRectangle:
+                        pos: self.pos
+                        size: self.size
+                        radius: [4]
+                Label:
+                    text: app.console_output if app.console_output else 'No logs yet.'
+                    font_size: '10sp'
+                    color: (0.7, 0.78, 0.85, 1)
+                    halign: 'left'
+                    valign: 'top'
+                    size_hint_y: None
+                    text_size: self.width - dp(10), None
+                    height: max(self.texture_size[1] + dp(10), self.parent.height)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Calibration Wizard Screen

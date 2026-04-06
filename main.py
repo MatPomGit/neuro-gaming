@@ -23,12 +23,17 @@ Architecture overview
 """
 
 import logging
+import math
 import os
+import struct
+import tempfile
 import threading
+import wave
 
 from kivy.animation import Animation
 from kivy.app import App
 from kivy.clock import Clock
+from kivy.core.audio import SoundLoader
 from kivy.core.window import Window
 from kivy.lang import Builder
 from kivy.properties import (
@@ -77,6 +82,21 @@ _DIR_LABELS: dict[str, str] = {
     DIRECTION_RIGHT:    "Right",
 }
 
+
+class _UILogHandler(logging.Handler):
+    """Mirror logger output into the application's console panel."""
+
+    def __init__(self, app: "NeuroGamingApp") -> None:
+        super().__init__()
+        self._app = app
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            message = self.format(record)
+        except Exception:
+            message = record.getMessage()
+        self._app.add_console_line(message)
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Kivy layout (KV string) – loaded once at startup
 # ──────────────────────────────────────────────────────────────────────────────
@@ -92,6 +112,7 @@ class ScanScreen(Screen):
     status_text = StringProperty("Press 'Scan' to search for Muse devices.")
     device_names = ListProperty([])
     is_scanning = BooleanProperty(False)
+    fsm_state = StringProperty("IDLE")
     scan_pulse = NumericProperty(1.0)
 
     _pulse_anim = None
@@ -106,6 +127,7 @@ class ScanScreen(Screen):
             return
         app = App.get_running_app()
         self.status_text = "Scanning…"
+        self.fsm_state = "SCANNING"
         self.device_names = []
         self.is_scanning = True
         # Pulse the scan button while scanning
@@ -142,6 +164,10 @@ class ScanScreen(Screen):
         self.device_names = device_names
         self.status_text = status
         self.is_scanning = False
+        self.fsm_state = "FOUND" if device_names and device_names[0] != "No Muse devices found." else "IDLE"
+        if app := App.get_running_app():
+            if device_names and device_names[0] != "No Muse devices found.":
+                app.play_found_sound()
         self.scan_pulse = 1.0
 
     def connect_device(self, index: int) -> None:
@@ -153,6 +179,7 @@ class ScanScreen(Screen):
         
         device = devices[index]
         self.status_text = f"Connecting to {device.name}…"
+        self.fsm_state = "CONNECTING"
         self.is_scanning = True  # Re-use flag to disable buttons during connect
         
         # Run connection in background thread to avoid UI freeze
@@ -173,8 +200,11 @@ class ScanScreen(Screen):
         self.is_scanning = False
         if success:
             app = App.get_running_app()
+            self.fsm_state = "CONNECTED"
+            app.play_connected_sound()
             app.root.current = "game"
         else:
+            self.fsm_state = "ERROR"
             self.status_text = f"CONNECTION FAILED: {error_msg.upper()}"
 
     def skip_to_keyboard(self) -> None:
@@ -190,6 +220,18 @@ class ScanScreen(Screen):
 
     def _update_status(self, msg: str) -> None:
         self.status_text = msg
+        upper_msg = msg.upper()
+        if "SCANNING" in upper_msg:
+            self.fsm_state = "SCANNING"
+        elif "CONNECTING" in upper_msg:
+            self.fsm_state = "CONNECTING"
+        elif "CONNECTED" in upper_msg:
+            self.fsm_state = "CONNECTED"
+        elif "ERROR" in upper_msg:
+            self.fsm_state = "ERROR"
+
+    def close_app(self) -> None:
+        App.get_running_app().shutdown_app()
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -335,6 +377,9 @@ class GameScreen(Screen):
         app.processor.reset()
         app.controller.reset()
         app.root.current = "scan"
+
+    def close_app(self) -> None:
+        App.get_running_app().shutdown_app()
 
     def open_user_guide(self) -> None:
         App.get_running_app().open_user_guide()
@@ -615,6 +660,16 @@ class NeuroGamingApp(App):
     """Root Kivy application."""
 
     version = StringProperty(__version__)
+    console_output = StringProperty("")
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._log_lines: list[str] = []
+        self._max_log_lines = 300
+        self._log_handler = _UILogHandler(self)
+        logging.getLogger().addHandler(self._log_handler)
+        self._sound_paths: dict[str, str] = {}
+        self._sounds: dict[str, object] = {}
 
     def build(self):
         # Core objects shared across screens
@@ -624,6 +679,7 @@ class NeuroGamingApp(App):
             on_status=lambda msg: logger.info("[Muse] %s", msg),
         )
         self.controller = GameController(key_mode="arrow")
+        self._prepare_sounds()
 
         # Load KV file if present
         if os.path.exists(KV_FILE):
@@ -637,7 +693,65 @@ class NeuroGamingApp(App):
         return sm
 
     def on_stop(self):
+        logging.getLogger().removeHandler(self._log_handler)
         self.connector.stop()
+
+    def add_console_line(self, line: str) -> None:
+        def _append(*_args):
+            self._log_lines.append(line)
+            if len(self._log_lines) > self._max_log_lines:
+                self._log_lines = self._log_lines[-self._max_log_lines:]
+            self.console_output = "\n".join(self._log_lines)
+        Clock.schedule_once(_append, 0)
+
+    def shutdown_app(self) -> None:
+        logger.info("Closing application requested by user.")
+        try:
+            self.connector.disconnect()
+        except Exception as exc:
+            logger.debug("Disconnect on close failed: %s", exc)
+        self.stop()
+
+    def _prepare_sounds(self) -> None:
+        temp_dir = tempfile.gettempdir()
+        found_path = os.path.join(temp_dir, "neuro_gaming_found.wav")
+        connect_path = os.path.join(temp_dir, "neuro_gaming_connect.wav")
+        if not os.path.exists(found_path):
+            self._generate_tone(found_path, freq=760.0, duration=0.12, volume=0.28)
+        if not os.path.exists(connect_path):
+            self._generate_tone(connect_path, freq=920.0, duration=0.1, volume=0.28)
+        self._sound_paths = {"found": found_path, "connect": connect_path}
+        self._sounds = {
+            "found": SoundLoader.load(found_path),
+            "connect": SoundLoader.load(connect_path),
+        }
+
+    def _generate_tone(self, path: str, freq: float, duration: float, volume: float) -> None:
+        sample_rate = 44100
+        count = int(sample_rate * duration)
+        with wave.open(path, "w") as wav_file:
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(sample_rate)
+            for i in range(count):
+                t = i / sample_rate
+                sample = math.sin(2 * math.pi * freq * t)
+                value = int(max(-1.0, min(1.0, sample * volume)) * 32767)
+                wav_file.writeframes(struct.pack("<h", value))
+
+    def play_found_sound(self) -> None:
+        sound = self._sounds.get("found")
+        if sound:
+            sound.stop()
+            sound.play()
+
+    def play_connected_sound(self) -> None:
+        sound = self._sounds.get("connect")
+        if not sound:
+            return
+        sound.stop()
+        sound.play()
+        Clock.schedule_once(lambda *_: sound.play(), 0.18)
 
     def open_user_guide(self) -> None:
         guide_text = (
