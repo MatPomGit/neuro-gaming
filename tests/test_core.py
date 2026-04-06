@@ -325,3 +325,73 @@ class TestMouseButtons:
         ctrl = GameController(on_mouse_action=actions.append)
         ctrl.handle_mouse_down(button)
         assert actions[-1] == action
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# SignalProcessor – calibration
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestSignalProcessorCalibration:
+    def test_calibration_changes_metrics_to_zscores(self):
+        """After calibration, band powers should be expressed as Z-scores."""
+        proc = SignalProcessor()
+        # Feed a 10 Hz sine to all channels for the calibration window
+        _fill_processor_with_sine(proc, freq=10.0, amplitude=10.0)
+        proc.start_calibration()
+        _fill_processor_with_sine(proc, freq=10.0, amplitude=10.0)
+        proc.stop_calibration()
+
+        # With baseline == current signal the Z-score should be near 0
+        m = proc.get_metrics()
+        for ch in ("AF7", "AF8"):
+            assert abs(m[ch]["alpha"]) < 2.0, (
+                f"Expected near-zero alpha Z-score for {ch}, got {m[ch]['alpha']:.3f}"
+            )
+
+    def test_start_calibration_resets_samples(self):
+        """Calling start_calibration twice should discard earlier samples."""
+        proc = SignalProcessor()
+        _fill_processor_with_sine(proc, freq=10.0)
+        proc.start_calibration()
+        _fill_processor_with_sine(proc, freq=10.0)
+        proc.start_calibration()   # second call should clear the buffer
+        # Internal calib sample lists should be empty after restart
+        for ch in ("TP9", "AF7", "AF8", "TP10"):
+            assert proc._calib_samples[ch] == []  # noqa: SLF001
+
+    def test_stop_calibration_without_enough_data_is_safe(self):
+        """stop_calibration with fewer than BUFFER_SIZE samples should not crash."""
+        proc = SignalProcessor()
+        proc.start_calibration()
+        # Feed only 10 samples – far fewer than BUFFER_SIZE
+        tiny = np.ones(10, dtype=np.float32)
+        for ch in ("TP9", "AF7", "AF8", "TP10"):
+            proc.add_samples(ch, tiny)
+        proc.stop_calibration()   # must not raise
+        # Metrics should still return zeros (no baseline established)
+        m = proc.get_metrics()
+        for ch in ("TP9", "AF7", "AF8", "TP10"):
+            assert m[ch]["alpha"] == pytest.approx(0.0, abs=1e-3)
+
+    def test_calibration_flag_is_cleared_after_stop(self):
+        proc = SignalProcessor()
+        proc.start_calibration()
+        assert proc._calibrating is True  # noqa: SLF001
+        proc.stop_calibration()
+        assert proc._calibrating is False  # noqa: SLF001
+
+    def test_samples_accumulated_during_calibration(self):
+        """Samples added while calibrating should appear in _calib_samples."""
+        proc = SignalProcessor()
+        proc.start_calibration()
+        signal = np.ones(50, dtype=np.float32)
+        proc.add_samples("AF7", signal)
+        assert len(proc._calib_samples["AF7"]) == 50  # noqa: SLF001
+
+    def test_samples_not_accumulated_outside_calibration(self):
+        """Samples added before calibration starts should not pollute calib buffer."""
+        proc = SignalProcessor()
+        signal = np.ones(50, dtype=np.float32)
+        proc.add_samples("AF7", signal)
+        proc.start_calibration()
+        assert proc._calib_samples["AF7"] == []  # noqa: SLF001

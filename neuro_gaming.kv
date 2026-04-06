@@ -341,11 +341,11 @@
             spacing: 12
 
             Button:
-                text: 'STOP CALIBRATION' if root.is_calibrating else 'START CALIBRATION'
+                text: 'OPEN CALIBRATION'
                 font_size: '12sp'
                 bold: True
                 background_normal: ''
-                background_color: (0.7, 0.3, 0.1, 1) if root.is_calibrating else (0.15, 0.15, 0.2, 1)
+                background_color: (0.15, 0.15, 0.2, 1)
                 on_release: root.toggle_calibration()
 
             Button:
@@ -365,6 +365,267 @@
                 on_release: root.disconnect()
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Calibration Wizard Screen
+# ─────────────────────────────────────────────────────────────────────────────
+
+<CalibrationScreen>:
+    canvas.before:
+        Color:
+            rgba: (0.04, 0.04, 0.06, 1)
+        Rectangle:
+            pos: self.pos
+            size: self.size
+
+    BoxLayout:
+        orientation: 'vertical'
+        padding: [28, 32, 28, 24]
+        spacing: 18
+
+        # ── Header ───────────────────────────────────────────────────────────
+        BoxLayout:
+            orientation: 'vertical'
+            size_hint_y: None
+            height: '56dp'
+            Label:
+                text: 'CALIBRATION WIZARD'
+                font_size: '22sp'
+                bold: True
+                color: (1, 1, 1, 1)
+                halign: 'center'
+            Label:
+                text: 'Follow the steps below to record your EEG baseline'
+                font_size: '11sp'
+                color: (0.45, 0.45, 0.55, 1)
+                halign: 'center'
+
+        # ── Step-by-step instruction list ────────────────────────────────────
+        BoxLayout:
+            orientation: 'vertical'
+            size_hint_y: None
+            height: '230dp'
+            spacing: 6
+            padding: [4, 0, 4, 0]
+            canvas.before:
+                Color:
+                    rgba: (0.09, 0.09, 0.14, 1)
+                RoundedRectangle:
+                    pos: self.pos
+                    size: self.size
+                    radius: [6]
+
+            Label:
+                text: 'HOW TO CALIBRATE'
+                font_size: '10sp'
+                bold: True
+                size_hint_y: None
+                height: '24dp'
+                color: (0.35, 0.55, 0.9, 1)
+                halign: 'center'
+
+            # Step 1
+            BoxLayout:
+                size_hint_y: None
+                height: '36dp'
+                padding: [12, 2, 12, 2]
+                canvas.before:
+                    Color:
+                        rgba: (0.18, 0.55, 1.0, 0.22) if root.current_step == 0 else (0, 0, 0, 0)
+                    RoundedRectangle:
+                        pos: self.pos
+                        size: self.size
+                        radius: [4]
+                Label:
+                    text: root.steps[0]
+                    font_size: '11sp'
+                    color: (1, 1, 1, 1) if root.current_step == 0 else (0.55, 0.55, 0.65, 1)
+                    bold: root.current_step == 0
+                    halign: 'left'
+                    valign: 'middle'
+                    text_size: self.size
+
+            # Step 2
+            BoxLayout:
+                size_hint_y: None
+                height: '36dp'
+                padding: [12, 2, 12, 2]
+                canvas.before:
+                    Color:
+                        rgba: (0.18, 0.55, 1.0, 0.22) if root.current_step == 1 else (0, 0, 0, 0)
+                    RoundedRectangle:
+                        pos: self.pos
+                        size: self.size
+                        radius: [4]
+                Label:
+                    text: root.steps[1]
+                    font_size: '11sp'
+                    color: (1, 1, 1, 1) if root.current_step == 1 else (0.55, 0.55, 0.65, 1)
+                    bold: root.current_step == 1
+                    halign: 'left'
+                    valign: 'middle'
+                    text_size: self.size
+
+            # Step 3
+            BoxLayout:
+                size_hint_y: None
+                height: '36dp'
+                padding: [12, 2, 12, 2]
+                canvas.before:
+                    Color:
+                        rgba: (0.18, 0.55, 1.0, 0.22) if root.current_step == 2 else (0, 0, 0, 0)
+                    RoundedRectangle:
+                        pos: self.pos
+                        size: self.size
+                        radius: [4]
+                Label:
+                    text: root.steps[2]
+                    font_size: '11sp'
+                    color: (1, 1, 1, 1) if root.current_step == 2 else (0.55, 0.55, 0.65, 1)
+                    bold: root.current_step == 2
+                    halign: 'left'
+                    valign: 'middle'
+                    text_size: self.size
+
+            # Step 4
+            BoxLayout:
+                size_hint_y: None
+                height: '36dp'
+                padding: [12, 2, 12, 2]
+                canvas.before:
+                    Color:
+                        rgba: (0.18, 0.55, 1.0, 0.22) if root.current_step == 3 else (0, 0, 0, 0)
+                    RoundedRectangle:
+                        pos: self.pos
+                        size: self.size
+                        radius: [4]
+                Label:
+                    text: root.steps[3]
+                    font_size: '11sp'
+                    color: (1, 1, 1, 1) if root.current_step == 3 else (0.55, 0.55, 0.65, 1)
+                    bold: root.current_step == 3
+                    halign: 'left'
+                    valign: 'middle'
+                    text_size: self.size
+
+            # Step 5
+            BoxLayout:
+                size_hint_y: None
+                height: '36dp'
+                padding: [12, 2, 12, 2]
+                canvas.before:
+                    Color:
+                        rgba: (0.18, 0.55, 1.0, 0.22) if root.current_step == 4 else (0, 0, 0, 0)
+                    RoundedRectangle:
+                        pos: self.pos
+                        size: self.size
+                        radius: [4]
+                Label:
+                    text: root.steps[4]
+                    font_size: '11sp'
+                    color: (0.3, 0.9, 0.5, 1) if root.calibration_done else ((1, 1, 1, 1) if root.current_step == 4 else (0.55, 0.55, 0.65, 1))
+                    bold: root.current_step == 4
+                    halign: 'left'
+                    valign: 'middle'
+                    text_size: self.size
+
+        # ── Signal quality display ────────────────────────────────────────────
+        BoxLayout:
+            orientation: 'vertical'
+            size_hint_y: None
+            height: '90dp'
+            spacing: 6
+            canvas.before:
+                Color:
+                    rgba: (0.09, 0.09, 0.14, 1)
+                RoundedRectangle:
+                    pos: self.pos
+                    size: self.size
+                    radius: [6]
+            Label:
+                text: 'SENSOR CONTACT QUALITY'
+                font_size: '10sp'
+                bold: True
+                size_hint_y: None
+                height: '22dp'
+                color: (0.5, 0.5, 0.6, 1)
+                halign: 'center'
+            BoxLayout:
+                spacing: 12
+                padding: [12, 0, 12, 8]
+                QualityBar:
+                    channel: 'TP9'
+                    quality: root.quality_tp9
+                QualityBar:
+                    channel: 'AF7'
+                    quality: root.quality_af7
+                QualityBar:
+                    channel: 'AF8'
+                    quality: root.quality_af8
+                QualityBar:
+                    channel: 'TP10'
+                    quality: root.quality_tp10
+
+        # ── Calibration progress ──────────────────────────────────────────────
+        BoxLayout:
+            orientation: 'vertical'
+            size_hint_y: None
+            height: '64dp'
+            spacing: 6
+            # Progress bar background
+            canvas.before:
+                Color:
+                    rgba: (0.09, 0.09, 0.14, 1)
+                RoundedRectangle:
+                    pos: self.pos
+                    size: self.size
+                    radius: [6]
+            Label:
+                text: root.status_text
+                font_size: '11sp'
+                color: (0.3, 0.9, 0.5, 1) if root.calibration_done else (0.75, 0.75, 0.85, 1)
+                halign: 'center'
+                bold: root.calibration_done
+            # Timer bar
+            Widget:
+                size_hint_y: None
+                height: '10dp'
+                canvas:
+                    Color:
+                        rgba: (0.08, 0.08, 0.12, 1)
+                    RoundedRectangle:
+                        pos: self.pos
+                        size: self.size
+                        radius: [3]
+                    Color:
+                        rgba: (0.3, 0.9, 0.5, 1) if root.calibration_done else (0.18, 0.55, 1.0, 1)
+                    RoundedRectangle:
+                        pos: self.pos
+                        size: self.width * (1.0 - root.timer_value / root.calibration_duration) if root.is_calibrating else (self.width if root.calibration_done else 0), self.height
+                        radius: [3]
+
+        # ── Control buttons ───────────────────────────────────────────────────
+        BoxLayout:
+            size_hint_y: None
+            height: '52dp'
+            spacing: 12
+
+            Button:
+                text: 'CALIBRATING…' if root.is_calibrating else ('RECALIBRATE' if root.calibration_done else 'START CALIBRATION')
+                font_size: '13sp'
+                bold: True
+                background_normal: ''
+                background_color: (0.55, 0.25, 0.08, 1) if root.is_calibrating else (0.18, 0.55, 1.0, 1)
+                disabled: root.is_calibrating
+                on_release: root.start_calibration()
+
+            Button:
+                text: 'BACK TO GAME'
+                font_size: '13sp'
+                bold: True
+                background_normal: ''
+                background_color: (0.15, 0.15, 0.2, 1)
+                on_release: root.go_back()
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Diagnostics Screen
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -379,10 +640,10 @@
         Color:
             rgba: (0.18, 0.55, 1, 0.05)
         Line:
-            points: [x, 0, x, self.height] for x in range(0, int(self.width), 80)
+            points: sum([[x, 0, x, self.height] for x in range(0, int(self.width), 80)], [])
             width: 1
         Line:
-            points: [0, y, self.width, y] for y in range(0, int(self.height), 80)
+            points: sum([[0, y, self.width, y] for y in range(0, int(self.height), 80)], [])
             width: 1
 
         # Test object (dot)
