@@ -45,6 +45,24 @@ CMD_STOP = b"\x02\x68\x0a"
 
 # Sampling rate of the Muse S (Hz)
 SAMPLE_RATE = 256
+BATTERY_LEVEL_UUID = "00002a19-0000-1000-8000-00805f9b34fb"
+
+# Known Muse data characteristics (used for capability reporting in UI)
+SENSOR_CHARACTERISTICS: dict[str, set[str]] = {
+    "EEG": {
+        "273e0003-4c4d-454d-96be-f03bac821358",
+        "273e0004-4c4d-454d-96be-f03bac821358",
+        "273e0005-4c4d-454d-96be-f03bac821358",
+        "273e0006-4c4d-454d-96be-f03bac821358",
+    },
+    "Gyroscope": {"273e0009-4c4d-454d-96be-f03bac821358"},
+    "Accelerometer": {"273e000a-4c4d-454d-96be-f03bac821358"},
+    "PPG": {
+        "273e000f-4c4d-454d-96be-f03bac821358",
+        "273e0010-4c4d-454d-96be-f03bac821358",
+        "273e0011-4c4d-454d-96be-f03bac821358",
+    },
+}
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Packet parser
@@ -127,6 +145,16 @@ class MuseConnector:
         self._thread: Optional[threading.Thread] = None
         self._client: Optional[BleakClient] = None
         self._connected = False
+        self._battery_task: Optional[asyncio.Task] = None
+        self._device_state = {
+            "device_name": "Unknown",
+            "address": "",
+            "rssi": None,
+            "battery_level": None,
+            "sample_rate_hz": SAMPLE_RATE,
+            "available_sensors": [],
+            "streaming": False,
+        }
 
         self.devices: list[BLEDevice] = []
 
@@ -181,6 +209,11 @@ class MuseConnector:
     def is_connected(self) -> bool:
         return self._connected
 
+    @property
+    def device_state(self) -> dict:
+        sensors = list(self._device_state.get("available_sensors", []))
+        return {**self._device_state, "available_sensors": sensors}
+
     # ── async implementation ───────────────────────────────────────────────
 
     def _run_loop(self) -> None:
@@ -204,7 +237,15 @@ class MuseConnector:
         self._client = BleakClient(device)
         await self._client.connect()
         self._connected = True
+        self._device_state.update({
+            "device_name": device.name or "Muse device",
+            "address": device.address,
+            "rssi": getattr(device, "rssi", None),
+            "streaming": False,
+        })
         self._on_status(f"Connected to {device.name}")
+
+        await self._refresh_device_state()
 
         # Subscribe to EEG notification characteristics
         for channel, uuid in EEG_UUIDS.items():
@@ -215,9 +256,14 @@ class MuseConnector:
 
         # Send "start streaming" command
         await self._client.write_gatt_char(CONTROL_UUID, CMD_START)
+        self._device_state["streaming"] = True
+        self._battery_task = asyncio.create_task(self._battery_poll_loop())
         self._on_status("EEG streaming started")
 
     async def _async_disconnect(self) -> None:
+        if self._battery_task:
+            self._battery_task.cancel()
+            self._battery_task = None
         if self._client and self._client.is_connected:
             try:
                 await self._client.write_gatt_char(CONTROL_UUID, CMD_STOP)
@@ -225,6 +271,7 @@ class MuseConnector:
                 pass
             await self._client.disconnect()
         self._connected = False
+        self._device_state["streaming"] = False
         self._on_status("Disconnected")
 
     def _make_eeg_handler(self, channel: str) -> Callable:
@@ -238,3 +285,43 @@ class MuseConnector:
                 logger.warning("EEG parse error on %s: %s", channel, exc)
 
         return handler
+
+    async def _refresh_device_state(self) -> None:
+        """Collect additional metadata (battery + available sensors)."""
+        if self._client is None:
+            return
+        try:
+            services = await self._client.get_services()
+        except Exception as exc:
+            logger.debug("Failed to query GATT services: %s", exc)
+            services = self._client.services
+
+        characteristic_uuids = {
+            ch.uuid.lower()
+            for service in services
+            for ch in service.characteristics
+        }
+        sensors = [
+            name
+            for name, uuids in SENSOR_CHARACTERISTICS.items()
+            if characteristic_uuids.intersection(uuids)
+        ]
+        self._device_state["available_sensors"] = sensors
+        self._device_state["battery_level"] = await self._read_battery_level()
+
+    async def _read_battery_level(self) -> Optional[int]:
+        if self._client is None or not self._client.is_connected:
+            return None
+        try:
+            data = await self._client.read_gatt_char(BATTERY_LEVEL_UUID)
+            if not data:
+                return None
+            return int(data[0])
+        except Exception as exc:
+            logger.debug("Battery level unavailable: %s", exc)
+            return None
+
+    async def _battery_poll_loop(self) -> None:
+        while self._client and self._client.is_connected:
+            self._device_state["battery_level"] = await self._read_battery_level()
+            await asyncio.sleep(20)
