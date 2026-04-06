@@ -1,195 +1,201 @@
 #: kivy 2.3.0
-# neuro_gaming.kv – Layout for the NeuroGaming Muse S Athena controller app
+# neuro_gaming.kv – Profesjonalny interfejs jednostki sterującej Muse S Athena
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Reusable widgets
+# Współdzielone style i widżety
 # ─────────────────────────────────────────────────────────────────────────────
 
 <DirectionButton@Label>:
     label: ''
     active: False
     text: self.label
-    font_size: '36sp'
+    font_size: '32sp'
     bold: True
     halign: 'center'
     valign: 'middle'
     color: (1, 1, 1, 1)
     canvas.before:
-        # Outer glow when active
+        # Podświetlenie aktywnego kierunku
         Color:
-            rgba: (0.2, 0.6, 1.0, 0.3) if self.active else (0, 0, 0, 0)
+            rgba: (0.18, 0.55, 1.0, 0.3) if self.active else (0, 0, 0, 0)
         RoundedRectangle:
-            pos: self.x - 4, self.y - 4
-            size: self.width + 8, self.height + 8
-            radius: [16]
-        # Main background
+            pos: self.x - 2, self.y - 2
+            size: self.width + 4, self.height + 4
+            radius: [8]
+        # Tło przycisku
         Color:
-            rgba: (0.18, 0.55, 1.0, 1.0) if self.active else (0.18, 0.18, 0.25, 1.0)
+            rgba: (0.18, 0.55, 1.0, 1.0) if self.active else (0.12, 0.12, 0.18, 1.0)
         RoundedRectangle:
             pos: self.pos
             size: self.size
-            radius: [12]
-        # Top highlight (inner gloss)
-        Color:
-            rgba: (1, 1, 1, 0.18) if self.active else (1, 1, 1, 0.06)
-        RoundedRectangle:
-            pos: self.x + 4, self.y + self.height * 0.55
-            size: self.width - 8, self.height * 0.35
-            radius: [9]
+            radius: [6]
 
 <BandBar@BoxLayout>:
     channel: ''
-    band: 'alpha'
+    band: 'ALPHA'
     value: 0.0
     orientation: 'vertical'
-    spacing: 2
+    spacing: 4
     Label:
-        text: root.channel + '\n' + root.band
+        text: f"{root.channel}\n{root.band}"
         font_size: '9sp'
+        bold: True
         size_hint_y: None
-        height: '24dp'
-        color: (0.7, 0.7, 0.7, 1)
+        height: '32dp'
+        color: (0.6, 0.6, 0.7, 1)
         halign: 'center'
     Widget:
         canvas:
-            # Track background
             Color:
-                rgba: (0.1, 0.1, 0.15, 1)
+                rgba: (0.08, 0.08, 0.12, 1)
             RoundedRectangle:
                 pos: self.pos
                 size: self.size
-                radius: [4]
-            # Colored fill – green for alpha, orange for beta
+                radius: [2]
             Color:
-                rgba: (0.2, 0.85, 0.5, 1) if root.band == 'α' else (1.0, 0.55, 0.15, 1)
+                rgba: (0.2, 0.7, 1.0, 1) if root.band == 'ALPHA' else (0.9, 0.5, 0.1, 1)
             Rectangle:
                 pos: self.pos
-                size: self.width * root.value, self.height
+                size: self.width * max(0, min(1.0, root.value)), self.height
 
 <QualityBar@BoxLayout>:
     channel: ''
     quality: 0.0
     orientation: 'vertical'
-    spacing: 2
+    spacing: 4
     Label:
         text: root.channel
         font_size: '9sp'
+        bold: True
         size_hint_y: None
-        height: '20dp'
-        color: (0.7, 0.7, 0.7, 1)
+        height: '24dp'
+        color: (0.6, 0.6, 0.7, 1)
         halign: 'center'
     Widget:
         canvas:
-            # Track background
             Color:
-                rgba: (0.1, 0.1, 0.15, 1)
+                rgba: (0.08, 0.08, 0.12, 1)
             RoundedRectangle:
                 pos: self.pos
                 size: self.size
-                radius: [4]
-            # Fill: red → yellow → green based on quality
+                radius: [2]
             Color:
                 r: max(0.0, 1.0 - root.quality * 2.0)
-                g: min(1.0, root.quality * 2.0) * 0.85
-                b: 0.05
+                g: min(1.0, root.quality * 2.0) * 0.8
+                b: 0.2
                 a: 1.0
             Rectangle:
                 pos: self.pos
-                size: self.width * root.quality, self.height
+                size: self.width * max(0, min(1.0, root.quality)), self.height
 
 <DeviceRow@Button>:
     index: 0
     size_hint_y: None
-    height: '44dp'
-    background_color: (0.15, 0.15, 0.22, 1)
-    color: (0.9, 0.9, 1.0, 1)
+    height: '48dp'
+    background_normal: ''
+    background_color: (0.12, 0.12, 0.18, 1)
+    color: (0.8, 0.8, 0.9, 1)
+    font_size: '13sp'
+    canvas.after:
+        Color:
+            rgba: (1, 1, 1, 0.05)
+        Line:
+            points: [self.x, self.y, self.x + self.width, self.y]
+            width: 1
     on_release: app.root.get_screen('scan').connect_device(self.index)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Scan / Connect Screen
+# Ekran Skanowania / Konfiguracji
 # ─────────────────────────────────────────────────────────────────────────────
 
 <ScanScreen>:
     canvas.before:
         Color:
-            rgba: (0.08, 0.08, 0.14, 1)
+            rgba: (0.04, 0.04, 0.06, 1)
         Rectangle:
             pos: self.pos
             size: self.size
 
     BoxLayout:
         orientation: 'vertical'
-        padding: [24, 32, 24, 24]
-        spacing: 14
+        padding: [32, 40, 32, 32]
+        spacing: 20
 
-        # Header
-        Label:
-            text: 'NeuroGaming'
-            font_size: '28sp'
-            bold: True
+        BoxLayout:
+            orientation: 'vertical'
             size_hint_y: None
-            height: '48dp'
-            color: (0.4, 0.75, 1.0, 1)
+            height: '70dp'
+            Label:
+                text: 'NEURO GAMING INTERFACE'
+                font_size: '24sp'
+                bold: True
+                color: (1, 1, 1, 1)
+                halign: 'center'
+            Label:
+                text: 'SYSTEM VERSION ' + app.version
+                font_size: '10sp'
+                color: (0.4, 0.4, 0.5, 1)
+                halign: 'center'
 
         Label:
-            text: 'Muse S Athena Controller  •  v' + app.version
-            font_size: '14sp'
+            text: root.status_text.upper()
+            font_size: '12sp'
             size_hint_y: None
-            height: '28dp'
-            color: (0.65, 0.65, 0.8, 1)
-
-        # Status
-        Label:
-            text: root.status_text
-            font_size: '13sp'
-            size_hint_y: None
-            height: '36dp'
-            color: (0.85, 0.85, 0.85, 1)
-            text_size: self.size
+            height: '30dp'
+            color: (0.7, 0.7, 0.8, 1)
             halign: 'center'
-            valign: 'middle'
 
-        # Scan button (pulses while scanning)
         Button:
-            text: 'Scanning…' if root.is_scanning else 'Scan for Muse Devices'
+            text: 'SCANNING...' if root.is_scanning else 'SCAN FOR DEVICES'
             size_hint_y: None
-            height: '50dp'
-            font_size: '15sp'
+            height: '52dp'
+            font_size: '14sp'
+            bold: True
+            background_normal: ''
             background_color: (0.18, 0.55, 1.0, 1)
             opacity: root.scan_pulse
             on_release: root.scan()
 
-        # Device list
         ScrollView:
             size_hint_y: 1
+            canvas.before:
+                Color:
+                    rgba: (0, 0, 0, 0.2)
+                Rectangle:
+                    pos: self.pos
+                    size: self.size
             RecycleView:
                 id: device_list
                 data: [{'text': n, 'index': i} for i, n in enumerate(root.device_names)]
                 viewclass: 'DeviceRow'
                 RecycleBoxLayout:
                     orientation: 'vertical'
-                    default_size: None, dp(44)
+                    default_size: None, dp(48)
                     default_size_hint: 1, None
                     size_hint_y: None
                     height: self.minimum_height
 
-        # Keyboard-only mode
-        Button:
-            text: 'Continue in keyboard-only mode (no Muse needed)'
+        BoxLayout:
             size_hint_y: None
-            height: '46dp'
-            font_size: '13sp'
-            background_color: (0.25, 0.25, 0.35, 1)
-            on_release: root.skip_to_keyboard()
-
-        # Test screen
-        Button:
-            text: 'Test Screen – control blue dot'
-            size_hint_y: None
-            height: '46dp'
-            font_size: '13sp'
-            background_color: (0.1, 0.45, 0.2, 1)
-            on_release: root.go_to_test()
+            height: '100dp'
+            orientation: 'vertical'
+            spacing: 8
+            Button:
+                text: 'VIRTUAL KEYBOARD MODE'
+                size_hint_y: None
+                height: '44dp'
+                font_size: '13sp'
+                background_normal: ''
+                background_color: (0.15, 0.15, 0.2, 1)
+                on_release: root.skip_to_keyboard()
+            Button:
+                text: 'OPEN DIAGNOSTICS SCREEN'
+                size_hint_y: None
+                height: '44dp'
+                font_size: '13sp'
+                background_normal: ''
+                background_color: (0.1, 0.35, 0.2, 1)
+                on_release: root.go_to_test()
 
         Button:
             text: 'Instrukcja połączenia i użytkowania'
@@ -200,137 +206,143 @@
             on_release: root.open_user_guide()
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Game Screen
+# Ekran Główny Operacyjny
 # ─────────────────────────────────────────────────────────────────────────────
 
 <GameScreen>:
     canvas.before:
         Color:
-            rgba: (0.08, 0.08, 0.14, 1)
+            rgba: (0.04, 0.04, 0.06, 1)
         Rectangle:
             pos: self.pos
             size: self.size
 
     BoxLayout:
         orientation: 'vertical'
-        padding: [16, 12, 16, 12]
-        spacing: 10
+        padding: [20, 16, 20, 16]
+        spacing: 16
 
-        # ── Status bar ──
+        # Pasek Stanu
         BoxLayout:
             size_hint_y: None
             height: '36dp'
-            spacing: 8
+            padding: [12, 0, 12, 0]
+            canvas.before:
+                Color:
+                    rgba: (0.1, 0.1, 0.15, 1)
+                Rectangle:
+                    pos: self.pos
+                    size: self.size
             Label:
-                text: ('[color=44aaff][EEG][/color]' if root.connected else '[color=ffaa33][KB][/color]')
-                markup: True
+                text: 'INPUT: ' + ('EEG' if root.connected else 'KEYBOARD')
+                font_size: '11sp'
+                bold: True
                 size_hint_x: None
-                width: '52dp'
-                font_size: '13sp'
+                width: '120dp'
+                color: (0.2, 0.7, 1.0, 1) if root.connected else (0.9, 0.5, 0.1, 1)
+                halign: 'left'
             Label:
-                text: root.status_text
-                font_size: '13sp'
-                color: (0.85, 0.85, 0.85, 1)
+                text: root.status_text.upper()
+                font_size: '11sp'
+                color: (0.6, 0.6, 0.7, 1)
+                halign: 'right'
 
-        # ── Directional pad ──
+        # Kontrolery Kierunku
         GridLayout:
             cols: 3
             rows: 3
-            spacing: 8
-            size_hint_y: 0.48
+            spacing: 16
+            size_hint_y: 0.45
+            padding: [40, 0, 40, 0]
 
-            # Row 1
             Widget:
             DirectionButton:
-                label: '▲'
+                label: 'UP'
                 active: root.direction == 'FORWARD'
             Widget:
 
-            # Row 2
             DirectionButton:
-                label: '◄'
+                label: 'LEFT'
                 active: root.direction == 'LEFT'
-            # Centre: current key label
             Label:
-                text: root.direction if root.direction != 'NONE' else ''
-                font_size: '11sp'
+                text: root.direction if root.direction != 'NONE' else 'STANDBY'
+                font_size: '12sp'
                 bold: True
-                color: (0.6, 0.6, 0.8, 1)
+                color: (0.4, 0.4, 0.5, 1)
                 halign: 'center'
-                valign: 'middle'
             DirectionButton:
-                label: '►'
+                label: 'RIGHT'
                 active: root.direction == 'RIGHT'
 
-            # Row 3
             Widget:
             DirectionButton:
-                label: '▼'
+                label: 'DOWN'
                 active: root.direction == 'BACKWARD'
             Widget:
 
-        # ── EEG band-power bars ──
+        # Panel Telemetrii
         BoxLayout:
-            orientation: 'vertical'
-            size_hint_y: 0.17
-            spacing: 4
+            orientation: 'horizontal'
+            size_hint_y: 0.35
+            spacing: 24
 
-            Label:
-                text: 'EEG Band Power'
-                font_size: '11sp'
-                bold: True
-                size_hint_y: None
-                height: '18dp'
-                color: (0.65, 0.65, 0.8, 1)
-
+            # EEG Metrics
             BoxLayout:
-                spacing: 6
-                BandBar:
-                    channel: 'AF7'
-                    band: 'α'
-                    value: root.alpha_left
-                BandBar:
-                    channel: 'AF8'
-                    band: 'α'
-                    value: root.alpha_right
-                BandBar:
-                    channel: 'AF7'
-                    band: 'β'
-                    value: root.beta_left
-                BandBar:
-                    channel: 'AF8'
-                    band: 'β'
-                    value: root.beta_right
+                orientation: 'vertical'
+                spacing: 8
+                Label:
+                    text: 'EEG BAND INTENSITY'
+                    font_size: '10sp'
+                    bold: True
+                    size_hint_y: None
+                    height: '20dp'
+                    color: (0.5, 0.5, 0.6, 1)
+                BoxLayout:
+                    spacing: 10
+                    BandBar:
+                        channel: 'AF7'
+                        band: 'ALPHA'
+                        value: root.alpha_left
+                    BandBar:
+                        channel: 'AF8'
+                        band: 'ALPHA'
+                        value: root.alpha_right
+                    BandBar:
+                        channel: 'AF7'
+                        band: 'BETA'
+                        value: root.beta_left
+                    BandBar:
+                        channel: 'AF8'
+                        band: 'BETA'
+                        value: root.beta_right
 
-        # ── Signal quality indicators ──
-        BoxLayout:
-            orientation: 'vertical'
-            size_hint_y: 0.12
-            spacing: 4
-
-            Label:
-                text: 'Signal Quality'
-                font_size: '11sp'
-                bold: True
-                size_hint_y: None
-                height: '18dp'
-                color: (0.65, 0.65, 0.8, 1)
-
+            # Signal Health
             BoxLayout:
-                spacing: 6
-                QualityBar:
-                    channel: 'TP9'
-                    quality: root.quality_tp9
-                QualityBar:
-                    channel: 'AF7'
-                    quality: root.quality_af7
-                QualityBar:
-                    channel: 'AF8'
-                    quality: root.quality_af8
-                QualityBar:
-                    channel: 'TP10'
-                    quality: root.quality_tp10
+                orientation: 'vertical'
+                spacing: 8
+                Label:
+                    text: 'SENSOR CONTACT QUALITY'
+                    font_size: '10sp'
+                    bold: True
+                    size_hint_y: None
+                    height: '20dp'
+                    color: (0.5, 0.5, 0.6, 1)
+                BoxLayout:
+                    spacing: 10
+                    QualityBar:
+                        channel: 'TP9'
+                        quality: root.quality_tp9
+                    QualityBar:
+                        channel: 'AF7'
+                        quality: root.quality_af7
+                    QualityBar:
+                        channel: 'AF8'
+                        quality: root.quality_af8
+                    QualityBar:
+                        channel: 'TP10'
+                        quality: root.quality_tp10
 
+<<<<<<< Updated upstream
         # ── Device state ──
         BoxLayout:
             orientation: 'vertical'
@@ -359,27 +371,36 @@
                 text_size: self.size
 
         # ── Control buttons ──
+=======
+        # Przyciski Systemowe
+>>>>>>> Stashed changes
         BoxLayout:
             size_hint_y: None
-            height: '46dp'
-            spacing: 8
+            height: '50dp'
+            spacing: 12
 
             Button:
-                text: 'Stop Calibration' if root.is_calibrating else 'Calibrate'
+                text: 'STOP CALIBRATION' if root.is_calibrating else 'START CALIBRATION'
                 font_size: '12sp'
-                background_color: (0.8, 0.4, 0.1, 1) if root.is_calibrating else (0.18, 0.55, 1.0, 1)
+                bold: True
+                background_normal: ''
+                background_color: (0.7, 0.3, 0.1, 1) if root.is_calibrating else (0.15, 0.15, 0.2, 1)
                 on_release: root.toggle_calibration()
 
             Button:
-                text: 'Mode: ' + root.key_mode
+                text: 'INPUT MODE: ' + root.key_mode.upper()
                 font_size: '12sp'
-                background_color: (0.25, 0.25, 0.35, 1)
+                bold: True
+                background_normal: ''
+                background_color: (0.15, 0.15, 0.2, 1)
                 on_release: root.toggle_key_mode()
 
             Button:
-                text: 'Disconnect'
+                text: 'DISCONNECT'
                 font_size: '12sp'
-                background_color: (0.6, 0.15, 0.15, 1)
+                bold: True
+                background_normal: ''
+                background_color: (0.5, 0.1, 0.1, 1)
                 on_release: root.disconnect()
 
             Button:
@@ -389,30 +410,27 @@
                 on_release: root.open_user_guide()
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Test Screen
+# Ekran Diagnostyczny
 # ─────────────────────────────────────────────────────────────────────────────
 
 <TestScreen>:
-    # Dark background + glow rings + movable dot drawn behind all children
     canvas.before:
         Color:
-            rgba: (0.05, 0.05, 0.1, 1)
+            rgba: (0.02, 0.02, 0.03, 1)
         Rectangle:
             pos: self.pos
             size: self.size
-        # Outer glow
+        # Siatka techniczna
         Color:
-            rgba: root.dot_color[0], root.dot_color[1], root.dot_color[2], root.dot_color[3] * 0.2
-        Ellipse:
-            pos: root.dot_x - root.dot_radius * 2.2, root.dot_y - root.dot_radius * 2.2
-            size: root.dot_radius * 4.4, root.dot_radius * 4.4
-        # Mid glow
-        Color:
-            rgba: root.dot_color[0], root.dot_color[1], root.dot_color[2], root.dot_color[3] * 0.4
-        Ellipse:
-            pos: root.dot_x - root.dot_radius * 1.5, root.dot_y - root.dot_radius * 1.5
-            size: root.dot_radius * 3, root.dot_radius * 3
-        # Main dot
+            rgba: (0.18, 0.55, 1, 0.05)
+        Line:
+            points: [x, 0, x, self.height] for x in range(0, int(self.width), 80)
+            width: 1
+        Line:
+            points: [0, y, self.width, y] for y in range(0, int(self.height), 80)
+            width: 1
+
+        # Obiekt testowy (dot)
         Color:
             rgba: root.dot_color
         Ellipse:
@@ -421,76 +439,58 @@
 
     BoxLayout:
         orientation: 'vertical'
-        padding: [16, 12, 16, 12]
-        spacing: 8
+        padding: [24, 20, 24, 24]
+        spacing: 12
 
-        # ── Title bar ──
         Label:
-            text: 'Test Screen'
-            font_size: '20sp'
+            text: 'CONTROL DIAGNOSTICS'
+            font_size: '18sp'
             bold: True
             size_hint_y: None
             height: '40dp'
-            color: (0.4, 0.75, 1.0, 1)
-            halign: 'center'
+            color: (1, 1, 1, 1)
 
-        # ── Play area (transparent – dot shows through) ──
         Widget:
             size_hint_y: 1
 
-        # ── Instructions ──
-        Label:
-            text: 'W/S/\u2191/\u2193 \u2013 move up/down     A/D/\u2190/\u2192 \u2013 move left/right'
-            font_size: '10sp'
-            size_hint_y: None
-            height: '20dp'
-            color: (0.5, 0.5, 0.7, 1)
-            halign: 'center'
-
-        Label:
-            text: 'LMB \u2013 action flash     RMB \u2013 reset position'
-            font_size: '10sp'
-            size_hint_y: None
-            height: '20dp'
-            color: (0.5, 0.5, 0.7, 1)
-            halign: 'center'
-
-        # ── Status ──
-        Label:
-            text: root.status_text
-            font_size: '11sp'
-            size_hint_y: None
-            height: '26dp'
-            color: (0.85, 0.85, 0.85, 1)
-            halign: 'center'
-            text_size: self.size
-            valign: 'middle'
-
-        # ── Mouse-button state + Back button ──
         BoxLayout:
+            orientation: 'vertical'
             size_hint_y: None
-            height: '46dp'
+            height: '110dp'
+            padding: 16
             spacing: 8
+            canvas.before:
+                Color:
+                    rgba: (0.1, 0.1, 0.15, 0.8)
+                RoundedRectangle:
+                    pos: self.pos
+                    size: self.size
+                    radius: [4]
 
             Label:
-                text: 'LMB: ' + ('[color=33ff66]ACTIVE[/color]' if root.left_active else '[color=666688]idle[/color]')
-                markup: True
-                font_size: '13sp'
-                bold: True
-                halign: 'center'
-                valign: 'middle'
+                text: root.status_text.upper()
+                font_size: '11sp'
+                color: (0.8, 0.8, 0.9, 1)
 
-            Label:
-                text: 'RMB: ' + ('[color=ff5555]ACTIVE[/color]' if root.right_active else '[color=666688]idle[/color]')
-                markup: True
-                font_size: '13sp'
-                bold: True
-                halign: 'center'
-                valign: 'middle'
+            BoxLayout:
+                spacing: 20
+                Label:
+                    text: 'L-ACTION: ' + ('ACTIVE' if root.left_active else 'IDLE')
+                    font_size: '11sp'
+                    bold: True
+                    color: (0.2, 0.8, 0.4, 1) if root.left_active else (0.4, 0.4, 0.5, 1)
+                Label:
+                    text: 'R-RESET: ' + ('ACTIVE' if root.right_active else 'IDLE')
+                    font_size: '11sp'
+                    bold: True
+                    color: (0.8, 0.2, 0.2, 1) if root.right_active else (0.4, 0.4, 0.5, 1)
 
             Button:
-                text: '\u2190 Back'
-                font_size: '13sp'
-                size_hint_x: 0.4
-                background_color: (0.25, 0.25, 0.35, 1)
+                text: 'EXIT DIAGNOSTICS'
+                font_size: '12sp'
+                bold: True
+                size_hint_y: None
+                height: '40dp'
+                background_normal: ''
+                background_color: (0.15, 0.15, 0.2, 1)
                 on_release: root.go_back()

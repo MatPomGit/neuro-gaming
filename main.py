@@ -150,13 +150,31 @@ class ScanScreen(Screen):
         if index < 0 or index >= len(devices):
             self.status_text = "Invalid device selection."
             return
+        
         device = devices[index]
         self.status_text = f"Connecting to {device.name}…"
+        self.is_scanning = True  # Re-use flag to disable buttons during connect
+        
+        # Run connection in background thread to avoid UI freeze
+        threading.Thread(
+            target=self._do_connect, 
+            args=(app, device), 
+            daemon=True
+        ).start()
+
+    def _do_connect(self, app, device) -> None:
         try:
             app.connector.connect(device)
-            app.root.current = "game"
+            Clock.schedule_once(lambda dt: self._connect_done(True))
         except Exception as exc:
-            self.status_text = f"Connection failed: {exc}"
+            Clock.schedule_once(lambda dt: self._connect_done(False, str(exc)))
+
+    def _connect_done(self, success: bool, error_msg: str = "") -> None:
+        self.is_scanning = False
+        if success:
+            self.manager.current = "game"
+        else:
+            self.status_text = f"Connection failed: {error_msg}"
 
     def skip_to_keyboard(self) -> None:
         """Continue in keyboard-only mode (no Muse required)."""

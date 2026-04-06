@@ -234,6 +234,7 @@ class MuseConnector:
 
     async def _async_connect(self, device: BLEDevice) -> None:
         self._on_status(f"Connecting to {device.name}…")
+<<<<<<< Updated upstream
         self._client = BleakClient(device)
         await self._client.connect()
         self._connected = True
@@ -259,6 +260,33 @@ class MuseConnector:
         self._device_state["streaming"] = True
         self._battery_task = asyncio.create_task(self._battery_poll_loop())
         self._on_status("EEG streaming started")
+=======
+        # Use address instead of BLEDevice object for better stability on Windows
+        self._client = BleakClient(device.address)
+        
+        try:
+            await self._client.connect()
+            self._connected = True
+            self._on_status(f"Connected to {device.name}")
+
+            # Subscribe to EEG notification characteristics
+            for channel, uuid in EEG_UUIDS.items():
+                await self._client.start_notify(
+                    uuid,
+                    self._make_eeg_handler(channel),
+                )
+
+            # Send "start streaming" command
+            await self._client.write_gatt_char(CONTROL_UUID, CMD_START)
+            self._on_status("EEG streaming started")
+        except Exception as exc:
+            logger.error("Connection failed: %s", exc)
+            self._connected = False
+            self._on_status(f"Error: {exc}")
+            if self._client:
+                await self._client.disconnect()
+            raise
+>>>>>>> Stashed changes
 
     async def _async_disconnect(self) -> None:
         if self._battery_task:
