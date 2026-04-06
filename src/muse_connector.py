@@ -250,6 +250,7 @@ class MuseConnector:
 
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._thread: Optional[threading.Thread] = None
+        self._start_lock = threading.Lock()
         self._client: Optional[BleakClient] = None
         self._connected = False
         self._battery_task: Optional[asyncio.Task] = None
@@ -269,7 +270,10 @@ class MuseConnector:
 
     def start(self) -> None:
         """Start the background asyncio thread."""
-        self._loop = asyncio.new_event_loop()
+        with self._start_lock:
+            if self._loop is not None and self._loop.is_running():
+                return
+            self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(
             target=self._run_loop,
             daemon=True,
