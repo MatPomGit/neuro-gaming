@@ -29,6 +29,15 @@ Mouse button mapping
 +-------------+------------------+
 | Right (RMB) | ``"right_click"``|
 +-------------+------------------+
+
+Button forwarding
+-----------------
+When ``forwarding_enabled=True`` is passed to :class:`GameController`,
+detected directions are forwarded to the OS as real key presses via
+``pynput``.  This allows other running games or applications to receive
+the EEG-derived inputs as actual keyboard/mouse events.  If ``pynput``
+is not available (e.g. on Android), forwarding silently degrades to a
+no-op.
 """
 
 import logging
@@ -66,6 +75,116 @@ KEY_MAP: dict[str, tuple[str, str]] = {
 # a new direction (simple hysteresis to avoid jitter).
 HYSTERESIS_COUNT = 3
 
+# pynput arrow-key name → pynput Key constant (populated lazily)
+_PYNPUT_ARROW_NAMES = ("up", "down", "left", "right")
+
+
+class ButtonForwarder:
+    """Forwards detected directions and mouse events to the OS as real input.
+
+    Uses ``pynput`` as the OS-level input injection backend.  When
+    ``pynput`` is unavailable (e.g. on Android) all public methods are
+    silent no-ops so the rest of the application continues to work.
+
+    Attributes
+    ----------
+    available:
+        ``True`` when ``pynput`` was imported successfully and OS input
+        injection is active.
+    """
+
+    def __init__(self) -> None:
+        self._keyboard = None
+        self._mouse = None
+        self._Key = None
+        self._Button = None
+        try:
+            from pynput import keyboard as _kb, mouse as _ms  # noqa: PLC0415
+            self._keyboard = _kb.Controller()
+            self._mouse = _ms.Controller()
+            self._Key = _kb.Key
+            self._Button = _ms.Button
+            logger.debug("ButtonForwarder: pynput loaded – OS forwarding active")
+        except (ImportError, OSError) as exc:  # pragma: no cover
+            logger.warning("ButtonForwarder: pynput unavailable (%s) – forwarding is a no-op", exc)
+
+    # ── public API ─────────────────────────────────────────────────────────
+
+    @property
+    def available(self) -> bool:
+        """``True`` when pynput is loaded and OS injection is possible."""
+        return self._keyboard is not None
+
+    def press_direction(self, direction: str, key_mode: str = "arrow") -> None:
+        """Simulate pressing the OS key that corresponds to *direction*."""
+        if not self.available or direction == DIRECTION_NONE:
+            return
+        key = self._direction_to_key(direction, key_mode)
+        if key is not None:
+            self._safe_press(key)
+
+    def release_direction(self, direction: str, key_mode: str = "arrow") -> None:
+        """Simulate releasing the OS key that corresponds to *direction*."""
+        if not self.available or direction == DIRECTION_NONE:
+            return
+        key = self._direction_to_key(direction, key_mode)
+        if key is not None:
+            self._safe_release(key)
+
+    def press_mouse_button(self, button: str) -> None:
+        """Simulate pressing a mouse button at the OS level."""
+        if not self.available:
+            return
+        btn = self._str_to_button(button)
+        if btn is not None:
+            try:
+                self._mouse.press(btn)
+            except Exception as exc:
+                logger.warning("ButtonForwarder: mouse press failed: %s", exc)
+
+    def release_mouse_button(self, button: str) -> None:
+        """Simulate releasing a mouse button at the OS level."""
+        if not self.available:
+            return
+        btn = self._str_to_button(button)
+        if btn is not None:
+            try:
+                self._mouse.release(btn)
+            except Exception as exc:
+                logger.warning("ButtonForwarder: mouse release failed: %s", exc)
+
+    # ── private helpers ────────────────────────────────────────────────────
+
+    def _direction_to_key(self, direction: str, key_mode: str):
+        """Return the pynput key object for *direction* and *key_mode*."""
+        arrow, wasd = KEY_MAP.get(direction, ("", ""))
+        raw = arrow if key_mode == "arrow" else wasd
+        if not raw:
+            return None
+        if raw in _PYNPUT_ARROW_NAMES:
+            return getattr(self._Key, raw)
+        return raw  # single character (e.g. 'w', 'a', 's', 'd')
+
+    def _str_to_button(self, button: str):
+        """Return the pynput mouse Button for *button* name."""
+        if button == MOUSE_LEFT:
+            return self._Button.left
+        if button == MOUSE_RIGHT:
+            return self._Button.right
+        return None
+
+    def _safe_press(self, key) -> None:
+        try:
+            self._keyboard.press(key)
+        except Exception as exc:
+            logger.warning("ButtonForwarder: key press failed: %s", exc)
+
+    def _safe_release(self, key) -> None:
+        try:
+            self._keyboard.release(key)
+        except Exception as exc:
+            logger.warning("ButtonForwarder: key release failed: %s", exc)
+
 
 class GameController:
     """Manages the current directional game state.
@@ -88,6 +207,10 @@ class GameController:
         Optional callback ``(action: str) -> None`` invoked on each
         mouse button press.  *action* is one of ``ACTION_LEFT_CLICK``
         or ``ACTION_RIGHT_CLICK``.
+    forwarding_enabled:
+        When ``True``, direction changes and mouse events are forwarded
+        to the OS as real keyboard/mouse inputs via :class:`ButtonForwarder`.
+        Defaults to ``False``.
     """
 
     def __init__(
@@ -95,17 +218,21 @@ class GameController:
         on_direction_change: Optional[Callable[[str], None]] = None,
         key_mode: str = "arrow",
         on_mouse_action: Optional[Callable[[str], None]] = None,
+        forwarding_enabled: bool = False,
     ) -> None:
         self.current_direction: str = DIRECTION_NONE
         self.key_mode = key_mode
         self.on_direction_change = on_direction_change
         self.on_mouse_action = on_mouse_action
+        self.forwarding_enabled = forwarding_enabled
 
         self._pending_direction: str = DIRECTION_NONE
         self._pending_count: int = 0
 
         self.left_button_pressed: bool = False
         self.right_button_pressed: bool = False
+
+        self._forwarder: ButtonForwarder = ButtonForwarder()
 
     # ── public API ─────────────────────────────────────────────────────────
 
@@ -123,20 +250,20 @@ class GameController:
 
         if self._pending_count >= HYSTERESIS_COUNT:
             if new_direction != self.current_direction:
+                previous = self.current_direction
                 self.current_direction = new_direction
                 logger.debug("Direction changed → %s", new_direction)
-                if self.on_direction_change:
-                    self.on_direction_change(new_direction)
+                self._emit_direction_change(previous, new_direction)
 
     def set_direction(self, direction: str) -> None:
         """Directly set the current direction (used for keyboard overrides)."""
         if direction != self.current_direction:
+            previous = self.current_direction
             self.current_direction = direction
             self._pending_direction = direction
             self._pending_count = HYSTERESIS_COUNT
             logger.debug("Direction set (manual) → %s", direction)
-            if self.on_direction_change:
-                self.on_direction_change(direction)
+            self._emit_direction_change(previous, direction)
 
     def get_active_key(self) -> str:
         """Return the keyboard key that represents the current direction.
@@ -148,11 +275,27 @@ class GameController:
 
     def reset(self) -> None:
         """Reset to the neutral state."""
+        if self.forwarding_enabled:
+            self._forwarder.release_direction(self.current_direction, self.key_mode)
+            if self.left_button_pressed:
+                self._forwarder.release_mouse_button(MOUSE_LEFT)
+            if self.right_button_pressed:
+                self._forwarder.release_mouse_button(MOUSE_RIGHT)
         self.current_direction = DIRECTION_NONE
         self._pending_direction = DIRECTION_NONE
         self._pending_count = 0
         self.left_button_pressed = False
         self.right_button_pressed = False
+
+    # ── private helpers ────────────────────────────────────────────────────
+
+    def _emit_direction_change(self, previous: str, new_direction: str) -> None:
+        """Forward OS key events and invoke the callback for a direction change."""
+        if self.forwarding_enabled:
+            self._forwarder.release_direction(previous, self.key_mode)
+            self._forwarder.press_direction(new_direction, self.key_mode)
+        if self.on_direction_change:
+            self.on_direction_change(new_direction)
 
     # ── keyboard input handler ─────────────────────────────────────────────
 
@@ -206,12 +349,16 @@ class GameController:
         if button == MOUSE_LEFT:
             self.left_button_pressed = True
             logger.debug("Mouse left button pressed")
+            if self.forwarding_enabled:
+                self._forwarder.press_mouse_button(MOUSE_LEFT)
             if self.on_mouse_action:
                 self.on_mouse_action(ACTION_LEFT_CLICK)
             return True
         if button == MOUSE_RIGHT:
             self.right_button_pressed = True
             logger.debug("Mouse right button pressed")
+            if self.forwarding_enabled:
+                self._forwarder.press_mouse_button(MOUSE_RIGHT)
             if self.on_mouse_action:
                 self.on_mouse_action(ACTION_RIGHT_CLICK)
             return True
@@ -233,9 +380,13 @@ class GameController:
         """
         if button == MOUSE_LEFT:
             self.left_button_pressed = False
+            if self.forwarding_enabled:
+                self._forwarder.release_mouse_button(MOUSE_LEFT)
             return True
         if button == MOUSE_RIGHT:
             self.right_button_pressed = False
+            if self.forwarding_enabled:
+                self._forwarder.release_mouse_button(MOUSE_RIGHT)
             return True
         return False
 
