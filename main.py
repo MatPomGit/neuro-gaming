@@ -319,15 +319,8 @@ class GameScreen(Screen):
     # ── button handlers ────────────────────────────────────────────────────
 
     def toggle_calibration(self) -> None:
-        app = App.get_running_app()
-        if self.is_calibrating:
-            app.processor.stop_calibration()
-            self.is_calibrating = False
-            self.status_text = "Calibration complete — baseline saved."
-        else:
-            app.processor.start_calibration()
-            self.is_calibrating = True
-            self.status_text = "Calibrating… sit still with eyes open (5–10 seconds)."
+        """Navigate to the dedicated calibration wizard screen."""
+        App.get_running_app().root.current = "calibration"
 
     def toggle_key_mode(self) -> None:
         app = App.get_running_app()
@@ -485,6 +478,135 @@ class TestScreen(Screen):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Screen: Calibration
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Total recording time for a single calibration run (seconds)
+CALIBRATION_DURATION = 10
+
+# Step descriptions shown in the calibration wizard
+_CALIB_STEPS = [
+    "1. Put on the Muse headband and ensure all sensors have direct skin contact.",
+    "2. Verify sensor contact quality — all quality bars should be solid green.",
+    "3. Sit still, relax, and look straight ahead with eyes open.",
+    "4. Press START CALIBRATION and remain still for 10 seconds.",
+    "5. When the timer reaches zero the baseline is saved automatically.",
+]
+
+
+class CalibrationScreen(Screen):
+    """Step-by-step calibration wizard.
+
+    Guides the user through fitting the headset, checking signal quality,
+    and recording an EEG baseline used to normalise subsequent band powers.
+    """
+
+    # Current active step index (0-based, matches _CALIB_STEPS)
+    current_step = NumericProperty(0)
+
+    # Calibration state
+    is_calibrating = BooleanProperty(False)
+    calibration_done = BooleanProperty(False)
+
+    # Countdown timer value (seconds remaining)
+    timer_value = NumericProperty(CALIBRATION_DURATION)
+
+    # Human-readable status displayed below the step list
+    status_text = StringProperty("Follow the steps above, then press START CALIBRATION.")
+
+    # Signal quality per channel (0–1)
+    quality_tp9  = NumericProperty(0.0)
+    quality_af7  = NumericProperty(0.0)
+    quality_af8  = NumericProperty(0.0)
+    quality_tp10 = NumericProperty(0.0)
+
+    # Step label texts (read-only; bound from the constant list)
+    steps = ListProperty(_CALIB_STEPS)
+
+    # Expose duration so the KV timer bar can reference it without a magic number
+    calibration_duration = NumericProperty(CALIBRATION_DURATION)
+
+    _tick_event = None
+    _elapsed = 0.0
+
+    def on_enter(self, *args) -> None:
+        self._tick_event = Clock.schedule_interval(self._tick, 0.25)
+        # If arriving from game screen with active calibration, stop it cleanly
+        if self.is_calibrating:
+            self._finish_calibration()
+
+    def on_leave(self, *args) -> None:
+        if self._tick_event:
+            self._tick_event.cancel()
+            self._tick_event = None
+        # Cancel any ongoing calibration when navigating away
+        if self.is_calibrating:
+            self._finish_calibration()
+
+    # ── periodic UI update (250 ms) ────────────────────────────────────────
+
+    def _tick(self, dt: float) -> None:
+        sq = app.processor.get_signal_quality()
+        self.quality_tp9  = sq.get("TP9",  0.0)
+        self.quality_af7  = sq.get("AF7",  0.0)
+        self.quality_af8  = sq.get("AF8",  0.0)
+        self.quality_tp10 = sq.get("TP10", 0.0)
+
+        # Advance step highlight based on quality / state
+        if not self.is_calibrating and not self.calibration_done:
+            self._auto_advance_step()
+
+        # Countdown while calibrating
+        if self.is_calibrating:
+            self._elapsed += dt
+            remaining = max(0.0, CALIBRATION_DURATION - self._elapsed)
+            self.timer_value = remaining
+            self.status_text = f"Calibrating… {int(remaining) + 1}s remaining — stay still."
+            if remaining <= 0:
+                self._finish_calibration()
+
+    def _auto_advance_step(self) -> None:
+        """Advance the highlighted step automatically as conditions are met."""
+        avg_quality = (
+            self.quality_tp9 + self.quality_af7 +
+            self.quality_af8 + self.quality_tp10
+        ) / 4.0
+        if avg_quality >= 0.5 and self.current_step < 2:
+            self.current_step = 2
+        elif avg_quality < 0.5 and self.current_step >= 2:
+            self.current_step = 1
+
+    # ── button handlers ────────────────────────────────────────────────────
+
+    def start_calibration(self) -> None:
+        """Begin recording a new EEG baseline."""
+        app = App.get_running_app()
+        self.is_calibrating = True
+        self.calibration_done = False
+        self._elapsed = 0.0
+        self.timer_value = CALIBRATION_DURATION
+        self.current_step = 3
+        self.status_text = f"Calibrating… {CALIBRATION_DURATION}s remaining — stay still."
+        app.processor.start_calibration()
+        logger.info("Calibration wizard: started")
+
+    def _finish_calibration(self) -> None:
+        """Stop recording and compute the baseline."""
+        app = App.get_running_app()
+        app.processor.stop_calibration()
+        self.is_calibrating = False
+        self.calibration_done = True
+        self.current_step = 4
+        self.timer_value = 0.0
+        self.status_text = "Calibration complete — baseline saved.  You may return to the game."
+        logger.info("Calibration wizard: finished")
+
+    def go_back(self) -> None:
+        """Return to the previous screen."""
+        App.get_running_app().root.current = "game"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Main App
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -509,6 +631,7 @@ class NeuroGamingApp(App):
         sm = ScreenManager(transition=FadeTransition(duration=0.25))
         sm.add_widget(ScanScreen(name="scan"))
         sm.add_widget(GameScreen(name="game"))
+        sm.add_widget(CalibrationScreen(name="calibration"))
         sm.add_widget(TestScreen(name="test"))
         return sm
 
@@ -712,7 +835,7 @@ _INLINE_KV = """
             spacing: 6
 
             Button:
-                text: 'Calibrate' if not root.is_calibrating else 'Stop Calibration'
+                text: 'Calibration Wizard'
                 on_release: root.toggle_calibration()
 
             Button:
@@ -722,6 +845,76 @@ _INLINE_KV = """
             Button:
                 text: 'Disconnect'
                 on_release: root.disconnect()
+
+<CalibrationScreen>:
+    BoxLayout:
+        orientation: 'vertical'
+        padding: 20
+        spacing: 12
+
+        Label:
+            text: 'CALIBRATION WIZARD'
+            font_size: '20sp'
+            bold: True
+            size_hint_y: None
+            height: '50dp'
+
+        Label:
+            text: 'Steps:'
+            font_size: '13sp'
+            size_hint_y: None
+            height: '28dp'
+
+        Label:
+            text: root.steps[0]
+            font_size: '12sp'
+            size_hint_y: None
+            height: '32dp'
+            color: (1, 1, 1, 1) if root.current_step == 0 else (0.5, 0.5, 0.5, 1)
+        Label:
+            text: root.steps[1]
+            font_size: '12sp'
+            size_hint_y: None
+            height: '32dp'
+            color: (1, 1, 1, 1) if root.current_step == 1 else (0.5, 0.5, 0.5, 1)
+        Label:
+            text: root.steps[2]
+            font_size: '12sp'
+            size_hint_y: None
+            height: '32dp'
+            color: (1, 1, 1, 1) if root.current_step == 2 else (0.5, 0.5, 0.5, 1)
+        Label:
+            text: root.steps[3]
+            font_size: '12sp'
+            size_hint_y: None
+            height: '32dp'
+            color: (1, 1, 1, 1) if root.current_step == 3 else (0.5, 0.5, 0.5, 1)
+        Label:
+            text: root.steps[4]
+            font_size: '12sp'
+            size_hint_y: None
+            height: '32dp'
+            color: (1, 1, 1, 1) if root.current_step == 4 else (0.5, 0.5, 0.5, 1)
+
+        Label:
+            text: root.status_text
+            font_size: '12sp'
+            size_hint_y: None
+            height: '36dp'
+
+        BoxLayout:
+            size_hint_y: None
+            height: '48dp'
+            spacing: 8
+
+            Button:
+                text: 'CALIBRATING…' if root.is_calibrating else ('RECALIBRATE' if root.calibration_done else 'START CALIBRATION')
+                disabled: root.is_calibrating
+                on_release: root.start_calibration()
+
+            Button:
+                text: 'Back'
+                on_release: root.go_back()
 
 <DirectionButton@Label>:
     label: ''
