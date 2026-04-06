@@ -546,6 +546,7 @@ class CalibrationScreen(Screen):
     # ── periodic UI update (250 ms) ────────────────────────────────────────
 
     def _tick(self, dt: float) -> None:
+        app = App.get_running_app()
         sq = app.processor.get_signal_quality()
         self.quality_tp9  = sq.get("TP9",  0.0)
         self.quality_af7  = sq.get("AF7",  0.0)
