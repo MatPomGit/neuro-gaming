@@ -28,7 +28,6 @@ import os
 import struct
 import tempfile
 import threading
-import time
 import wave
 
 from kivy.animation import Animation
@@ -56,6 +55,7 @@ from kivy.uix.textinput import TextInput
 from src.game_controller import GameController
 from src.muse_connector import MuseConnector
 from src.settings import AppSettings, load_settings, save_settings
+from src.single_instance import acquire_lock, release_lock
 from src.signal_processor import (
     DIRECTION_BACKWARD,
     DIRECTION_FORWARD,
@@ -71,44 +71,6 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 logger = logging.getLogger(__name__)
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Single Instance Enforcement
-# ──────────────────────────────────────────────────────────────────────────────
-
-def _enforce_single_instance():
-    """Ensure only one instance of the app is running. 
-    If an existing instance is found, it is closed to free up BLE resources.
-    """
-    pid_file = os.path.join(tempfile.gettempdir(), "neuro_gaming.pid")
-    
-    if os.path.exists(pid_file):
-        try:
-            with open(pid_file, "r") as f:
-                old_pid = int(f.read().strip())
-            
-            if old_pid != os.getpid():
-                # On Windows, use taskkill to force close the previous instance
-                if os.name == 'nt':
-                    os.system(f"taskkill /F /PID {old_pid} >nul 2>&1")
-                else:
-                    import signal
-                    os.kill(old_pid, signal.SIGKILL)
-                
-                # Brief pause to allow the OS and BLE stack to clean up
-                time.sleep(1.5)
-        except Exception:
-            # If we can't read the PID or kill the process, just proceed
-            pass
-            
-    try:
-        with open(pid_file, "w") as f:
-            f.write(str(os.getpid()))
-    except Exception:
-        pass
-
-# Execute single instance check before initializing Kivy or BLE
-_enforce_single_instance()
 
 __version__ = "1.2.0"
 
@@ -818,6 +780,7 @@ class NeuroGamingApp(App):
     console_output = StringProperty("")
 
     def __init__(self, **kwargs):
+        self._instance_lock = kwargs.pop("instance_lock", None)
         super().__init__(**kwargs)
         self._log_lines: list[str] = []
         self._max_log_lines = 300
@@ -859,6 +822,7 @@ class NeuroGamingApp(App):
     def on_stop(self):
         logging.getLogger().removeHandler(self._log_handler)
         self.connector.stop()
+        release_lock(self._instance_lock)
 
     def add_console_line(self, line: str) -> None:
         def _append(*_args):
@@ -1295,4 +1259,8 @@ def _keycode_to_name(key: int, codepoint: str) -> str:
 # ──────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    NeuroGamingApp().run()
+    app_lock = acquire_lock("neuro_gaming")
+    if app_lock is None:
+        print("NeuroGaming is already running. Close the existing window and try again.")
+        raise SystemExit(0)
+    NeuroGamingApp(instance_lock=app_lock).run()
