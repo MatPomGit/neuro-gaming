@@ -141,6 +141,65 @@ class TestSignalProcessor:
         direction = proc.get_direction()
         assert direction == DIRECTION_LEFT
 
+    def test_direction_confidence_stable_under_noise(self):
+        proc = SignalProcessor()
+        proc.beta_threshold = 0.2
+        proc.beta_offset = 0.2
+        proc.min_confidence = 0.25
+        rng = np.random.default_rng(42)
+        t = np.linspace(0, 1, SAMPLE_RATE, endpoint=False)
+        beta_signal = (12.0 * np.sin(2 * np.pi * 20 * t)).astype(np.float32)
+
+        forward_count = 0
+        for _ in range(12):
+            noisy = beta_signal + rng.normal(0, 1.5, SAMPLE_RATE).astype(np.float32)
+            for start in range(0, SAMPLE_RATE, 16):
+                chunk = noisy[start: start + 16]
+                proc.add_samples("AF7", chunk)
+                proc.add_samples("AF8", chunk)
+                proc.add_samples("TP9", chunk)
+                proc.add_samples("TP10", chunk)
+            if proc.get_direction() == DIRECTION_FORWARD:
+                forward_count += 1
+            assert 0.0 <= proc.get_direction_confidence() <= 1.0
+
+        assert forward_count >= 8
+
+    def test_short_artifact_does_not_cause_false_switch(self):
+        proc = SignalProcessor()
+        proc.beta_threshold = 0.2
+        proc.beta_offset = 0.2
+        proc.min_confidence = 0.2
+        _fill_processor_with_sine(proc, freq=20.0, amplitude=15.0)
+        assert proc.get_direction() == DIRECTION_FORWARD
+
+        # Short, extreme-amplitude artifact should be rejected.
+        artifact = np.array([500.0, -550.0, 620.0], dtype=np.float32)
+        proc.add_samples("AF7", artifact)
+        proc.add_samples("AF8", artifact)
+        assert proc.get_direction() == DIRECTION_NONE
+
+        # Returning to nominal signal should restore original direction.
+        _fill_processor_with_sine(proc, freq=20.0, amplitude=15.0)
+        assert proc.get_direction() == DIRECTION_FORWARD
+
+    def test_dynamic_thresholds_adapt_to_recent_baseline(self):
+        proc = SignalProcessor()
+        proc.beta_threshold = 0.1
+        proc.beta_offset = 0.05
+        proc.min_confidence = 0.2
+
+        # Build high beta baseline so dynamic beta threshold rises.
+        _fill_processor_with_sine(proc, freq=20.0, amplitude=22.0)
+        assert proc.get_direction() == DIRECTION_FORWARD
+        for _ in range(5):
+            _fill_processor_with_sine(proc, freq=20.0, amplitude=20.0)
+            proc.get_direction()
+
+        # Moderate beta that would pass static threshold should now be filtered.
+        _fill_processor_with_sine(proc, freq=20.0, amplitude=8.0)
+        assert proc.get_direction() == DIRECTION_NONE
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # GameController
@@ -679,4 +738,3 @@ class TestGameControllerForwarding:
         )
         ctrl.set_direction(DIRECTION_RIGHT)
         assert received == [DIRECTION_RIGHT]
-

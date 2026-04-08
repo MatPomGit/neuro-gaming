@@ -55,6 +55,14 @@ BETA_LOW,  BETA_HIGH  = 13.0, 30.0
 BETA_THRESHOLD  = 2.0   # µV² – mean beta power for FORWARD
 ALPHA_THRESHOLD = 2.0   # µV² – mean alpha power for BACKWARD
 ASYM_FACTOR     = 1.3   # ratio of left vs. right alpha for LEFT/RIGHT
+MIN_CONFIDENCE = 0.35
+
+# Artefact rejection
+MAX_SAMPLE_AMPLITUDE = 300.0   # µV, gross movement/blink artefact
+POWER_SPIKE_FACTOR = 4.0       # sudden power jump/drop between windows
+
+# Adaptive baselines
+EMA_ALPHA = 0.2
 
 # Direction constants
 DIRECTION_NONE     = "NONE"
@@ -136,6 +144,16 @@ class SignalProcessor:
         self.beta_threshold = BETA_THRESHOLD
         self.alpha_threshold = ALPHA_THRESHOLD
         self.asym_factor = ASYM_FACTOR
+        self.min_confidence = MIN_CONFIDENCE
+        self.alpha_offset = self.alpha_threshold
+        self.beta_offset = self.beta_threshold
+        self._ema_band: dict[str, dict[str, float | None]] = {
+            "AF7": {"alpha": None, "beta": None},
+            "AF8": {"alpha": None, "beta": None},
+        }
+        self._last_total_power: dict[str, float | None] = {ch: None for ch in CHANNELS}
+        self._artifact_channels: dict[str, bool] = {ch: False for ch in CHANNELS}
+        self._last_confidence = 0.0
         if settings is not None:
             self.apply_settings(settings)
 
@@ -144,12 +162,18 @@ class SignalProcessor:
         self.beta_threshold = settings.beta_threshold
         self.alpha_threshold = settings.alpha_threshold
         self.asym_factor = settings.asym_factor
+        self.beta_offset = settings.beta_threshold
+        self.alpha_offset = settings.alpha_threshold
 
     # ── data ingestion ─────────────────────────────────────────────────────
 
     def add_samples(self, channel: str, samples: np.ndarray) -> None:
         """Append *samples* to the rolling buffer for *channel*."""
         if channel not in self._buffers:
+            return
+        if len(samples) and float(np.max(np.abs(samples))) > MAX_SAMPLE_AMPLITUDE:
+            with self._lock:
+                self._artifact_channels[channel] = True
             return
         with self._lock:
             self._buffers[channel].extend(samples.tolist())
@@ -161,6 +185,9 @@ class SignalProcessor:
         with self._lock:
             for buf in self._buffers.values():
                 buf.clear()
+            self._last_total_power = {ch: None for ch in CHANNELS}
+            self._artifact_channels = {ch: False for ch in CHANNELS}
+            self._last_confidence = 0.0
 
     # ── calibration ────────────────────────────────────────────────────────
 
@@ -214,6 +241,16 @@ class SignalProcessor:
                     continue
                 alpha = _band_power(signal, ALPHA_LOW, ALPHA_HIGH)
                 beta  = _band_power(signal, BETA_LOW,  BETA_HIGH)
+                total_power = alpha + beta
+                prev_power = self._last_total_power[ch]
+                if self._artifact_channels[ch]:
+                    alpha, beta = 0.0, 0.0
+                    self._artifact_channels[ch] = False
+                elif prev_power is not None and prev_power > 1e-6:
+                    ratio = total_power / prev_power
+                    if ratio > POWER_SPIKE_FACTOR or ratio < (1.0 / POWER_SPIKE_FACTOR):
+                        alpha, beta = 0.0, 0.0
+                self._last_total_power[ch] = max(total_power, 1e-6)
                 if ch in self._baseline_mean:
                     bm = self._baseline_mean[ch]
                     bs = self._baseline_std[ch]
@@ -221,6 +258,27 @@ class SignalProcessor:
                     beta  = (beta  - bm["beta"])  / bs["beta"]
                 metrics[ch] = {"alpha": alpha, "beta": beta}
         return metrics
+
+    def _get_dynamic_thresholds(self) -> tuple[float, float]:
+        """Return dynamic (beta, alpha) thresholds using EMA baselines + offset."""
+        alpha_vals = [self._ema_band[ch]["alpha"] for ch in ("AF7", "AF8")]
+        beta_vals = [self._ema_band[ch]["beta"] for ch in ("AF7", "AF8")]
+        alpha_valid = [v for v in alpha_vals if v is not None]
+        beta_valid = [v for v in beta_vals if v is not None]
+        dyn_alpha = (float(np.mean(alpha_valid)) if alpha_valid else self.alpha_threshold) + self.alpha_offset
+        dyn_beta = (float(np.mean(beta_valid)) if beta_valid else self.beta_threshold) + self.beta_offset
+        return dyn_beta, dyn_alpha
+
+    def _update_ema_baselines(self, metrics: dict[str, dict[str, float]]) -> None:
+        for ch in ("AF7", "AF8"):
+            for band in ("alpha", "beta"):
+                current = metrics[ch][band]
+                prev = self._ema_band[ch][band]
+                self._ema_band[ch][band] = current if prev is None else (EMA_ALPHA * current + (1.0 - EMA_ALPHA) * prev)
+
+    def get_direction_confidence(self) -> float:
+        """Return confidence (0-1) for the latest direction decision."""
+        return self._last_confidence
 
     def get_direction(self) -> str:
         """Determine the current directional command from EEG metrics.
@@ -235,21 +293,39 @@ class SignalProcessor:
 
         alpha_left  = m["AF7"]["alpha"]   # left forehead
         alpha_right = m["AF8"]["alpha"]   # right forehead
+        dyn_beta_threshold, dyn_alpha_threshold = self._get_dynamic_thresholds()
+
+        # Margin-based confidence terms
+        beta_margin = (beta_avg - dyn_beta_threshold) / (abs(dyn_beta_threshold) + 1e-6)
+        left_ratio = alpha_left / (abs(alpha_right) + 1e-6)
+        right_ratio = alpha_right / (abs(alpha_left) + 1e-6)
+        left_margin = (left_ratio - self.asym_factor) / self.asym_factor
+        right_margin = (right_ratio - self.asym_factor) / self.asym_factor
+        backward_margin = min(
+            (alpha_avg - dyn_alpha_threshold) / (abs(dyn_alpha_threshold) + 1e-6),
+            (alpha_avg - beta_avg) / (abs(alpha_avg) + abs(beta_avg) + 1e-6),
+        )
+        quality_scores = self.get_signal_quality()
+        quality = (quality_scores["AF7"] + quality_scores["AF8"]) / 2.0
 
         # Priority: FORWARD > lateral (LEFT/RIGHT) > BACKWARD > NONE
-        if beta_avg > self.beta_threshold:
-            return DIRECTION_FORWARD
+        direction = DIRECTION_NONE
+        margin = 0.0
+        if beta_avg > dyn_beta_threshold:
+            direction, margin = DIRECTION_FORWARD, beta_margin
+        elif alpha_left > alpha_right * self.asym_factor:
+            direction, margin = DIRECTION_LEFT, left_margin
+        elif alpha_right > alpha_left * self.asym_factor:
+            direction, margin = DIRECTION_RIGHT, right_margin
+        elif alpha_avg > dyn_alpha_threshold and alpha_avg > beta_avg:
+            direction, margin = DIRECTION_BACKWARD, backward_margin
 
-        if alpha_left > alpha_right * self.asym_factor:
-            return DIRECTION_LEFT
-
-        if alpha_right > alpha_left * self.asym_factor:
-            return DIRECTION_RIGHT
-
-        if alpha_avg > self.alpha_threshold and alpha_avg > beta_avg:
-            return DIRECTION_BACKWARD
-
-        return DIRECTION_NONE
+        margin_norm = max(0.0, min(1.0, margin))
+        self._last_confidence = float(max(0.0, min(1.0, 0.65 * quality + 0.35 * margin_norm)))
+        self._update_ema_baselines(m)
+        if direction == DIRECTION_NONE or self._last_confidence < self.min_confidence:
+            return DIRECTION_NONE
+        return direction
 
     def get_signal_quality(self) -> dict[str, float]:
         """Return a 0–1 signal-quality score for each channel.
