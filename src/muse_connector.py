@@ -213,7 +213,9 @@ class MuseConnector:
     """Manages Bluetooth connection to a Muse S Athena device.
 
     Previously connected devices are automatically remembered and can be
-    reconnected via :meth:`auto_connect`.
+    reconnected via :meth:`auto_connect`. Status messages are exposed via
+    a callback that can be set or replaced at runtime using
+    :meth:`set_status_callback`.
 
     Usage
     -----
@@ -241,13 +243,14 @@ class MuseConnector:
             ``"AF8"``, ``"TP10"``.  *samples* is a float32 array of 5 µV
             values.  This callback is invoked from the background thread.
         on_status:
-            Optional callback for human-readable status messages.
+            Optional callback for human-readable status messages. Can also
+            be set later via :meth:`set_status_callback`.
         known_devices_path:
             Optional path to the JSON file used to persist previously
             connected devices.  Defaults to ``~/.neuro_gaming_devices.json``.
         """
         self._on_eeg = on_eeg
-        self._on_status = on_status or (lambda _: None)
+        self._status_callback = on_status or (lambda _: None)
         self._store = KnownDevicesStore(known_devices_path or _DEFAULT_STORE_PATH)
 
         self._loop: Optional[asyncio.AbstractEventLoop] = None
@@ -369,14 +372,28 @@ class MuseConnector:
         )
         return future.result(timeout=timeout + 15)
 
+    def set_status_callback(self, callback: Callable[[str], None]) -> None:
+        """Register or replace the status callback used by the connector.
+
+        Parameters
+        ----------
+        callback:
+            Callable invoked with a single human-readable status message.
+        """
+        self._status_callback = callback
+
     # ── async implementation ───────────────────────────────────────────────
 
     def _run_loop(self) -> None:
         asyncio.set_event_loop(self._loop)
         self._loop.run_forever()
 
+    def _emit_status(self, message: str) -> None:
+        """Emit a human-readable status message via the configured callback."""
+        self._status_callback(message)
+
     async def _async_scan(self, timeout: float) -> None:
-        self._on_status("Scanning for Muse devices…")
+        self._emit_status("Scanning for Muse devices…")
         found: list[BLEDevice] = []
         devices = await BleakScanner.discover(timeout=timeout)
         for d in devices:
@@ -385,13 +402,13 @@ class MuseConnector:
                 found.append(d)
                 logger.info("Found Muse device: %s (%s)", d.name, d.address)
         self.devices = found
-        self._on_status(f"Found {len(found)} Muse device(s)")
+        self._emit_status(f"Found {len(found)} Muse device(s)")
 
     async def _async_connect(self, device: BLEDevice) -> None:
         device_name = getattr(device, "name", "Muse") or "Muse"
         device_address = getattr(device, "address", str(device))
         
-        self._on_status(f"Connecting to {device_name}…")
+        self._emit_status(f"Connecting to {device_name}…")
         # Use address instead of BLEDevice object for better stability on Windows
         self._client = BleakClient(device_address)
         
@@ -420,7 +437,7 @@ class MuseConnector:
                 "rssi": getattr(device, "rssi", None),
                 "streaming": False,
             })
-            self._on_status(f"Connected to {device_name}")
+            self._emit_status(f"Connected to {device_name}")
             self._store.save(device_address, device_name)
 
             # Windows-specific: Try to pair if not already paired
@@ -484,11 +501,11 @@ class MuseConnector:
             await self._client.write_gatt_char(CONTROL_UUID, CMD_START)
             self._device_state["streaming"] = True
             self._battery_task = asyncio.create_task(self._battery_poll_loop())
-            self._on_status(f"Streaming: {subscribed_count} channels")
+            self._emit_status(f"Streaming: {subscribed_count} channels")
         except Exception as exc:
             logger.error("Connection failed: %s", exc)
             self._connected = False
-            self._on_status(f"Error: {exc}")
+            self._emit_status(f"Error: {exc}")
             if self._client:
                 await self._client.disconnect()
             raise
@@ -497,13 +514,13 @@ class MuseConnector:
         """Scan and connect to the first known device found."""
         known = self._store.addresses()
         if not known:
-            self._on_status("No previously connected devices found.")
+            self._emit_status("No previously connected devices found.")
             return False
 
         known_names = ", ".join(
             e["name"] or e["address"] for e in self._store.all()
         )
-        self._on_status(f"Searching for known device(s): {known_names}…")
+        self._emit_status(f"Searching for known device(s): {known_names}…")
         logger.info("Auto-connect: searching for known addresses %s", known)
 
         all_devices = await BleakScanner.discover(timeout=timeout)
@@ -513,7 +530,7 @@ class MuseConnector:
                 await self._async_connect(d)
                 return True
 
-        self._on_status("Known device(s) not found nearby.")
+        self._emit_status("Known device(s) not found nearby.")
         return False
 
     async def _async_disconnect(self) -> None:
@@ -528,7 +545,7 @@ class MuseConnector:
             await self._client.disconnect()
         self._connected = False
         self._device_state["streaming"] = False
-        self._on_status("Disconnected")
+        self._emit_status("Disconnected")
 
     def _make_eeg_handler(self, channel: str) -> Callable:
         """Return a BLE notification callback bound to *channel*."""
