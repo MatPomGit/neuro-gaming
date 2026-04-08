@@ -124,7 +124,7 @@ class ScanScreen(Screen):
     def on_enter(self, *args):
         app = App.get_running_app()
         app.connector.start()
-        app.connector._on_status = self._update_status  # noqa: SLF001
+        app.connector.set_status_callback(self._update_status)
         
         # Auto-scan if no device is connected and we are not already scanning
         if not app.connector.is_connected and not self.is_scanning:
