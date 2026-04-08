@@ -467,6 +467,7 @@ class GameScreen(Screen):
                 forwarding_enabled=bool(forwarding_enabled),
                 debug_logging=app.settings.debug_logging,
                 debug_eeg_file=app.settings.debug_eeg_file,
+                debug_logging_enabled=app.settings.debug_logging_enabled,
             )
             candidate.validate()
         except (TypeError, ValueError) as exc:
@@ -803,6 +804,7 @@ class NeuroGamingApp(App):
         self.connector = MuseConnector(
             on_eeg=self.processor.add_samples,
             on_status=lambda msg: logger.info("[Muse] %s", msg),
+            debug_logging_enabled=self.settings.debug_logging_enabled,
         )
         self.controller = GameController(settings=self.settings)
         self.apply_settings()

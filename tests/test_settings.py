@@ -15,6 +15,7 @@ def test_settings_roundtrip_json(tmp_path):
         forwarding_enabled=True,
         debug_logging=True,
         debug_eeg_file=True,
+        debug_logging_enabled=True,
     )
     settings_path = tmp_path / "settings.json"
 
@@ -22,6 +23,21 @@ def test_settings_roundtrip_json(tmp_path):
     loaded = load_settings(settings_path)
 
     assert loaded == settings
+
+
+def test_settings_from_dict_uses_legacy_debug_eeg_file_as_fallback():
+    payload = {
+        "beta_threshold": 2.0,
+        "alpha_threshold": 2.0,
+        "asym_factor": 1.3,
+        "hysteresis_count": 3,
+        "key_mode": "arrow",
+        "forwarding_enabled": False,
+        "debug_logging": False,
+        "debug_eeg_file": True,
+    }
+    loaded = AppSettings.from_dict(payload)
+    assert loaded.debug_logging_enabled is True
 
 
 @pytest.mark.parametrize(
