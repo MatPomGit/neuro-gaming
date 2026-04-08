@@ -35,6 +35,8 @@ from typing import Optional
 
 import numpy as np
 
+from src.settings import AppSettings
+
 logger = logging.getLogger(__name__)
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -118,7 +120,7 @@ class SignalProcessor:
     Before calibration the raw µV² values are used directly.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, settings: Optional[AppSettings] = None) -> None:
         import threading
         self._lock = threading.Lock()
         self._buffers: dict[str, deque] = {
@@ -131,9 +133,17 @@ class SignalProcessor:
         self._baseline_std:  dict[str, dict[str, float]] = {}
 
         # Adjustable thresholds (can be changed by the UI)
-        self.beta_threshold  = BETA_THRESHOLD
+        self.beta_threshold = BETA_THRESHOLD
         self.alpha_threshold = ALPHA_THRESHOLD
-        self.asym_factor     = ASYM_FACTOR
+        self.asym_factor = ASYM_FACTOR
+        if settings is not None:
+            self.apply_settings(settings)
+
+    def apply_settings(self, settings: AppSettings) -> None:
+        """Apply runtime thresholds from the shared application settings."""
+        self.beta_threshold = settings.beta_threshold
+        self.alpha_threshold = settings.alpha_threshold
+        self.asym_factor = settings.asym_factor
 
     # ── data ingestion ─────────────────────────────────────────────────────
 

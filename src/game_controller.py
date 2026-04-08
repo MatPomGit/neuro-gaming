@@ -44,6 +44,7 @@ import logging
 from collections.abc import Callable
 from typing import Optional
 
+from src.settings import AppSettings
 from src.signal_processor import (
     DIRECTION_BACKWARD,
     DIRECTION_FORWARD,
@@ -219,6 +220,7 @@ class GameController:
         key_mode: str = "arrow",
         on_mouse_action: Optional[Callable[[str], None]] = None,
         forwarding_enabled: bool = False,
+        settings: Optional[AppSettings] = None,
     ) -> None:
         self.current_direction: str = DIRECTION_NONE
         self.key_mode = key_mode
@@ -228,11 +230,14 @@ class GameController:
 
         self._pending_direction: str = DIRECTION_NONE
         self._pending_count: int = 0
+        self.hysteresis_count: int = HYSTERESIS_COUNT
 
         self.left_button_pressed: bool = False
         self.right_button_pressed: bool = False
 
         self._forwarder: ButtonForwarder = ButtonForwarder()
+        if settings is not None:
+            self.apply_settings(settings)
 
     # ── public API ─────────────────────────────────────────────────────────
 
@@ -248,7 +253,7 @@ class GameController:
             self._pending_direction = new_direction
             self._pending_count = 1
 
-        if self._pending_count >= HYSTERESIS_COUNT:
+        if self._pending_count >= self.hysteresis_count:
             if new_direction != self.current_direction:
                 previous = self.current_direction
                 self.current_direction = new_direction
@@ -261,9 +266,15 @@ class GameController:
             previous = self.current_direction
             self.current_direction = direction
             self._pending_direction = direction
-            self._pending_count = HYSTERESIS_COUNT
+            self._pending_count = self.hysteresis_count
             logger.debug("Direction set (manual) → %s", direction)
             self._emit_direction_change(previous, direction)
+
+    def apply_settings(self, settings: AppSettings) -> None:
+        """Apply runtime settings from the shared application settings object."""
+        self.key_mode = settings.key_mode
+        self.forwarding_enabled = settings.forwarding_enabled
+        self.hysteresis_count = settings.hysteresis_count
 
     def get_active_key(self) -> str:
         """Return the keyboard key that represents the current direction.

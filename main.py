@@ -50,9 +50,12 @@ from kivy.uix.label import Label
 from kivy.uix.popup import Popup
 from kivy.uix.screenmanager import FadeTransition, Screen, ScreenManager
 from kivy.uix.scrollview import ScrollView
+from kivy.uix.switch import Switch
+from kivy.uix.textinput import TextInput
 
 from src.game_controller import GameController
 from src.muse_connector import MuseConnector
+from src.settings import AppSettings, load_settings, save_settings
 from src.signal_processor import (
     DIRECTION_BACKWARD,
     DIRECTION_FORWARD,
@@ -326,6 +329,7 @@ class GameScreen(Screen):
     def on_enter(self, *args):
         app = App.get_running_app()
         self.connected = app.connector.is_connected
+        self.key_mode = app.controller.key_mode
         app.controller.on_direction_change = self._on_direction_change
         self._update_event = Clock.schedule_interval(self._tick, 0.1)
         Window.bind(on_key_down=self._on_key_down)
@@ -422,7 +426,105 @@ class GameScreen(Screen):
         app.controller.key_mode = (
             "wasd" if app.controller.key_mode == "arrow" else "arrow"
         )
+        app.settings.key_mode = app.controller.key_mode
+        app.persist_settings()
         self.key_mode = app.controller.key_mode
+
+    def open_settings_popup(self) -> None:
+        app = App.get_running_app()
+        settings = app.settings
+        root = BoxLayout(orientation="vertical", spacing=8, padding=12)
+        form = BoxLayout(orientation="vertical", spacing=6, size_hint_y=1)
+
+        beta_input = TextInput(text=str(settings.beta_threshold), multiline=False)
+        alpha_input = TextInput(text=str(settings.alpha_threshold), multiline=False)
+        asym_input = TextInput(text=str(settings.asym_factor), multiline=False)
+        hyst_input = TextInput(text=str(settings.hysteresis_count), multiline=False)
+        forwarding_switch = Switch(active=settings.forwarding_enabled)
+
+        for label_text, widget in (
+            ("Beta threshold", beta_input),
+            ("Alpha threshold", alpha_input),
+            ("Asymmetry factor", asym_input),
+            ("Hysteresis count", hyst_input),
+        ):
+            row = BoxLayout(size_hint_y=None, height="38dp")
+            row.add_widget(Label(text=label_text, size_hint_x=0.55))
+            row.add_widget(widget)
+            form.add_widget(row)
+
+        switch_row = BoxLayout(size_hint_y=None, height="38dp")
+        switch_row.add_widget(Label(text="OS forwarding", size_hint_x=0.55))
+        switch_row.add_widget(forwarding_switch)
+        form.add_widget(switch_row)
+
+        actions = BoxLayout(size_hint_y=None, height="44dp", spacing=8)
+        popup = Popup(title="Settings", content=root, size_hint=(0.8, 0.75))
+
+        save_btn = Button(text="Save")
+        reset_btn = Button(text="Restore defaults")
+        close_btn = Button(text="Close")
+
+        save_btn.bind(
+            on_release=lambda *_: self._save_settings_from_popup(
+                popup,
+                beta_input.text,
+                alpha_input.text,
+                asym_input.text,
+                hyst_input.text,
+                forwarding_switch.active,
+            )
+        )
+        reset_btn.bind(on_release=lambda *_: self._restore_defaults_from_popup(popup))
+        close_btn.bind(on_release=lambda *_: popup.dismiss())
+        actions.add_widget(save_btn)
+        actions.add_widget(reset_btn)
+        actions.add_widget(close_btn)
+
+        root.add_widget(form)
+        root.add_widget(actions)
+        popup.open()
+
+    def _save_settings_from_popup(
+        self,
+        popup: Popup,
+        beta: str,
+        alpha: str,
+        asym: str,
+        hysteresis: str,
+        forwarding_enabled: bool,
+    ) -> None:
+        app = App.get_running_app()
+        try:
+            candidate = AppSettings(
+                beta_threshold=float(beta),
+                alpha_threshold=float(alpha),
+                asym_factor=float(asym),
+                hysteresis_count=int(hysteresis),
+                key_mode=app.settings.key_mode,
+                forwarding_enabled=bool(forwarding_enabled),
+                debug_logging=app.settings.debug_logging,
+                debug_eeg_file=app.settings.debug_eeg_file,
+            )
+            candidate.validate()
+        except (TypeError, ValueError) as exc:
+            self.status_text = f"[SETTINGS] invalid values: {exc}"
+            return
+
+        app.settings = candidate
+        app.apply_settings()
+        app.persist_settings()
+        self.key_mode = app.controller.key_mode
+        popup.dismiss()
+
+    def _restore_defaults_from_popup(self, popup: Popup) -> None:
+        app = App.get_running_app()
+        app.settings = AppSettings()
+        app.apply_settings()
+        app.persist_settings()
+        self.key_mode = app.controller.key_mode
+        self.status_text = "[SETTINGS] restored defaults"
+        popup.dismiss()
 
     def disconnect(self) -> None:
         app = App.get_running_app()
@@ -723,15 +825,24 @@ class NeuroGamingApp(App):
         logging.getLogger().addHandler(self._log_handler)
         self._sound_paths: dict[str, str] = {}
         self._sounds: dict[str, object] = {}
+        self.settings = AppSettings()
 
     def build(self):
+        try:
+            self.settings = load_settings()
+        except Exception as exc:
+            logger.warning("Failed to load settings, using defaults: %s", exc)
+            self.settings = AppSettings()
+        if self.settings.debug_logging:
+            logging.getLogger().setLevel(logging.DEBUG)
         # Core objects shared across screens
-        self.processor = SignalProcessor()
+        self.processor = SignalProcessor(settings=self.settings)
         self.connector = MuseConnector(
             on_eeg=self.processor.add_samples,
             on_status=lambda msg: logger.info("[Muse] %s", msg),
         )
-        self.controller = GameController(key_mode="arrow")
+        self.controller = GameController(settings=self.settings)
+        self.apply_settings()
         self._prepare_sounds()
 
         # Load KV file if present
@@ -764,6 +875,16 @@ class NeuroGamingApp(App):
         except Exception as exc:
             logger.debug("Disconnect on close failed: %s", exc)
         self.stop()
+
+    def apply_settings(self) -> None:
+        self.processor.apply_settings(self.settings)
+        self.controller.apply_settings(self.settings)
+
+    def persist_settings(self) -> None:
+        try:
+            save_settings(self.settings)
+        except Exception as exc:
+            logger.warning("Failed to save settings: %s", exc)
 
     def _prepare_sounds(self) -> None:
         temp_dir = tempfile.gettempdir()
