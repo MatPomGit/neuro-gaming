@@ -20,6 +20,7 @@ class AppSettings:
     forwarding_enabled: bool = False
     debug_logging: bool = False
     debug_eeg_file: bool = False
+    debug_logging_enabled: bool = False
 
     def validate(self) -> None:
         """Validate current settings values and raise ``ValueError`` on invalid values."""
@@ -39,6 +40,8 @@ class AppSettings:
             raise ValueError("debug_logging must be a boolean")
         if not isinstance(self.debug_eeg_file, bool):
             raise ValueError("debug_eeg_file must be a boolean")
+        if not isinstance(self.debug_logging_enabled, bool):
+            raise ValueError("debug_logging_enabled must be a boolean")
 
     def to_dict(self) -> dict[str, Any]:
         self.validate()
@@ -56,6 +59,10 @@ class AppSettings:
             "forwarding_enabled": data.get("forwarding_enabled", defaults.forwarding_enabled),
             "debug_logging": data.get("debug_logging", defaults.debug_logging),
             "debug_eeg_file": data.get("debug_eeg_file", defaults.debug_eeg_file),
+            "debug_logging_enabled": data.get(
+                "debug_logging_enabled",
+                data.get("debug_eeg_file", defaults.debug_logging_enabled),
+            ),
         }
         settings = cls(**merged)
         settings.validate()

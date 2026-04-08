@@ -16,10 +16,13 @@ import json
 import logging
 import os
 import struct
+import sys
 import threading
 import time
 from datetime import datetime
 from collections.abc import Callable
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -27,9 +30,64 @@ from bleak import BleakClient, BleakScanner
 from bleak.backends.device import BLEDevice
 
 logger = logging.getLogger(__name__)
+_EEG_DEBUG_LOGGER_NAME = "neuro_gaming.eeg_debug"
 
 # Default path for the known-devices store
 _DEFAULT_STORE_PATH = os.path.join(os.path.expanduser("~"), ".neuro_gaming_devices.json")
+
+
+def get_eeg_debug_log_path(
+    app_name: str = "neuro_gaming",
+    *,
+    os_name: str | None = None,
+    platform: str | None = None,
+) -> Path:
+    """Return a platform-safe path for EEG debug logs."""
+    os_name = os_name or os.name
+    platform = platform or sys.platform
+    home = Path.home()
+    if os_name == "nt":
+        base = Path(os.environ.get("APPDATA", home / "AppData" / "Roaming"))
+    elif platform == "darwin":
+        base = home / "Library" / "Application Support"
+    else:
+        base = Path(os.environ.get("XDG_STATE_HOME", home / ".local" / "state"))
+    return base / app_name / "logs" / "eeg_debug.log"
+
+
+def configure_eeg_debug_logger(
+    *,
+    enabled: bool = False,
+    log_path: Path | str | None = None,
+    max_bytes: int = 2 * 1024 * 1024,
+    backup_count: int = 5,
+) -> tuple[logging.Logger, Optional[Path]]:
+    """Configure a rotating file logger dedicated to EEG samples."""
+    eeg_logger = logging.getLogger(_EEG_DEBUG_LOGGER_NAME)
+    eeg_logger.setLevel(logging.INFO)
+    eeg_logger.propagate = False
+
+    for handler in list(eeg_logger.handlers):
+        eeg_logger.removeHandler(handler)
+        handler.close()
+
+    if not enabled:
+        eeg_logger.disabled = True
+        return eeg_logger, None
+
+    resolved_path = Path(log_path) if log_path is not None else get_eeg_debug_log_path()
+    resolved_path.parent.mkdir(parents=True, exist_ok=True)
+
+    handler = RotatingFileHandler(
+        resolved_path,
+        maxBytes=max_bytes,
+        backupCount=backup_count,
+        encoding="utf-8",
+    )
+    handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+    eeg_logger.addHandler(handler)
+    eeg_logger.disabled = False
+    return eeg_logger, resolved_path
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Muse BLE UUIDs
@@ -233,6 +291,8 @@ class MuseConnector:
         on_eeg: Callable[[str, np.ndarray], None],
         on_status: Optional[Callable[[str], None]] = None,
         known_devices_path: Optional[str] = None,
+        debug_logging_enabled: bool = False,
+        debug_log_path: Path | str | None = None,
     ) -> None:
         """
         Parameters
@@ -248,6 +308,10 @@ class MuseConnector:
         known_devices_path:
             Optional path to the JSON file used to persist previously
             connected devices.  Defaults to ``~/.neuro_gaming_devices.json``.
+        debug_logging_enabled:
+            Enables/disables diagnostic EEG logging to a rotating file.
+        debug_log_path:
+            Optional override for the EEG debug log file location.
         """
         self._on_eeg = on_eeg
         self._status_callback = on_status or (lambda _: None)
@@ -270,10 +334,13 @@ class MuseConnector:
         }
 
         self.devices: list[BLEDevice] = []
-        
-        # Debug logging to file
-        self._debug_log_path = os.path.join(os.getcwd(), "eeg_debug.log")
-        logger.info("EEG debug log path: %s", self._debug_log_path)
+        self._debug_logging_enabled = debug_logging_enabled
+        self._eeg_debug_logger, self._debug_log_path = configure_eeg_debug_logger(
+            enabled=debug_logging_enabled,
+            log_path=debug_log_path,
+        )
+        if self._debug_log_path:
+            logger.info("EEG debug log path: %s", self._debug_log_path)
 
     # ── lifecycle ──────────────────────────────────────────────────────────
 
@@ -559,11 +626,9 @@ class MuseConnector:
                 _, samples = _parse_eeg_packet(bytes(data))
                 self._on_eeg(channel, samples)
                 
-                # Log to file in debug mode
-                if logger.isEnabledFor(logging.DEBUG):
+                if self._debug_logging_enabled:
                     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-                    with open(self._debug_log_path, "a") as f:
-                        f.write(f"[{timestamp}] {channel}: {samples}\n")
+                    self._eeg_debug_logger.info("[%s] %s: %s", timestamp, channel, samples)
             except Exception as exc:
                 logger.warning("EEG parse error on %s: %s", channel, exc)
 
