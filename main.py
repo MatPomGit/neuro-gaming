@@ -115,9 +115,11 @@ KV_FILE = os.path.join(os.path.dirname(__file__), "neuro_gaming.kv")
 class ScanScreen(Screen):
     status_text = StringProperty("Press 'Scan' to search for Muse devices.")
     device_names = ListProperty([])
+    found_devices_count = NumericProperty(0)
     is_scanning = BooleanProperty(False)
     fsm_state = StringProperty("IDLE")
     scan_pulse = NumericProperty(1.0)
+    fsm_color = ListProperty([0.6, 0.6, 0.7, 1.0])
 
     _pulse_anim = None
 
@@ -170,6 +172,8 @@ class ScanScreen(Screen):
             self._pulse_anim.stop(self)
             self._pulse_anim = None
         self.device_names = device_names
+        # Liczymy tylko realnie wykryte urządzenia, bez placeholdera.
+        self.found_devices_count = len(App.get_running_app().connector.devices)
         self.status_text = status
         self.is_scanning = False
         self.fsm_state = "FOUND" if device_names and device_names[0] != "No Muse devices found." else "IDLE"
@@ -247,6 +251,23 @@ class ScanScreen(Screen):
             self.fsm_state = "CONNECTED"
         elif "ERROR" in upper_msg:
             self.fsm_state = "ERROR"
+        self._update_fsm_color()
+
+    def on_fsm_state(self, *_args) -> None:
+        # Synchronizujemy kolor statusu po każdej zmianie stanu FSM.
+        self._update_fsm_color()
+
+    def _update_fsm_color(self) -> None:
+        # Kolory pomagają szybciej odczytać etap połączenia.
+        palette = {
+            "IDLE": [0.6, 0.6, 0.7, 1.0],
+            "SCANNING": [0.25, 0.7, 1.0, 1.0],
+            "FOUND": [0.35, 0.82, 0.45, 1.0],
+            "CONNECTING": [0.95, 0.75, 0.2, 1.0],
+            "CONNECTED": [0.2, 0.85, 0.35, 1.0],
+            "ERROR": [0.95, 0.35, 0.35, 1.0],
+        }
+        self.fsm_color = palette.get(self.fsm_state, palette["IDLE"])
 
     def close_app(self) -> None:
         App.get_running_app().shutdown_app()

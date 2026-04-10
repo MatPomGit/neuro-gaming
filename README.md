@@ -81,6 +81,12 @@ pip install -r requirements.txt
 python main.py
 ```
 
+On Windows you can also use:
+
+```bat
+run_neuro_gaming.bat
+```
+
 On the **Scan** screen:
 
 1. Press **Scan for Muse Devices** – the app searches for nearby Muse
