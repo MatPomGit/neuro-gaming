@@ -156,7 +156,7 @@
                     font_size: '11sp'
                     size_hint_y: None
                     height: '24dp'
-                    color: (0.7, 0.7, 0.8, 1)
+                    color: root.fsm_color
                     halign: 'center'
 
                 Button:
@@ -168,7 +168,17 @@
                     background_normal: ''
                     background_color: (0.18, 0.55, 1.0, 1)
                     opacity: root.scan_pulse
+                    disabled: root.is_scanning
                     on_release: root.scan()
+
+                Label:
+                    text: f'FOUND DEVICES: {root.found_devices_count}'
+                    font_size: '10sp'
+                    size_hint_y: None
+                    height: '18dp'
+                    color: (0.45, 0.45, 0.55, 1)
+                    halign: 'left'
+                    text_size: self.size
 
                 ScrollView:
                     size_hint_y: 1
@@ -191,9 +201,18 @@
 
                 BoxLayout:
                     size_hint_y: None
-                    height: '148dp'
+                    height: '196dp'
                     orientation: 'vertical'
                     spacing: 8
+                    Label:
+                        text: 'TIP: If one Muse is found, app can auto-connect.'
+                        size_hint_y: None
+                        height: '32dp'
+                        font_size: '10sp'
+                        color: (0.5, 0.5, 0.6, 1)
+                        halign: 'left'
+                        valign: 'middle'
+                        text_size: self.size
                     Button:
                         text: 'VIRTUAL KEYBOARD MODE'
                         size_hint_y: None
@@ -304,6 +323,37 @@
                 font_size: '11sp'
                 color: (0.6, 0.6, 0.7, 1)
                 halign: 'right'
+
+        BoxLayout:
+            size_hint_y: None
+            height: '44dp'
+            spacing: 10
+            padding: [10, 0, 10, 0]
+            canvas.before:
+                Color:
+                    rgba: (0.08, 0.08, 0.12, 1)
+                RoundedRectangle:
+                    pos: self.pos
+                    size: self.size
+                    radius: [4]
+            Label:
+                text: root.device_text
+                font_size: '10sp'
+                color: (0.72, 0.78, 0.88, 1)
+                halign: 'left'
+                text_size: self.size
+            Label:
+                text: root.battery_text
+                font_size: '10sp'
+                color: (0.72, 0.78, 0.88, 1)
+                halign: 'center'
+                text_size: self.size
+            Label:
+                text: root.sensors_text
+                font_size: '10sp'
+                color: (0.72, 0.78, 0.88, 1)
+                halign: 'right'
+                text_size: self.size
 
         # Directional Controls
         GridLayout:
