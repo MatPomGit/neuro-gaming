@@ -82,6 +82,31 @@ def _fill_processor_with_sine(processor: SignalProcessor, freq: float, amplitude
 
 
 class TestSignalProcessor:
+    def test_dynamic_threshold_matches_static_before_ema_warmup(self):
+        proc = SignalProcessor()
+        # Na starcie (bez historii EMA) próg dynamiczny powinien być
+        # równy wartości skonfigurowanej, bez ukrytego offsetu.
+        proc.beta_threshold = 1.7
+        proc.alpha_threshold = 1.4
+        dyn_beta, dyn_alpha = proc._get_dynamic_thresholds()
+        assert dyn_beta == pytest.approx(1.7)
+        assert dyn_alpha == pytest.approx(1.4)
+
+    def test_apply_settings_resets_adaptive_offsets(self):
+        proc = SignalProcessor()
+        proc.alpha_offset = 0.9
+        proc.beta_offset = 0.8
+
+        # Aplikacja ustawień ma przywrócić neutralny offset, aby nie
+        # podnosić sztucznie progów sterowania po zmianie konfiguracji.
+        from src.settings import AppSettings
+        proc.apply_settings(AppSettings(beta_threshold=2.5, alpha_threshold=1.5, asym_factor=1.2))
+
+        assert proc.beta_threshold == pytest.approx(2.5)
+        assert proc.alpha_threshold == pytest.approx(1.5)
+        assert proc.beta_offset == pytest.approx(0.0)
+        assert proc.alpha_offset == pytest.approx(0.0)
+
     def test_initial_state_returns_none_direction(self):
         proc = SignalProcessor()
         assert proc.get_direction() == DIRECTION_NONE
