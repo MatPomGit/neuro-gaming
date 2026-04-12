@@ -145,8 +145,10 @@ class SignalProcessor:
         self.alpha_threshold = ALPHA_THRESHOLD
         self.asym_factor = ASYM_FACTOR
         self.min_confidence = MIN_CONFIDENCE
-        self.alpha_offset = self.alpha_threshold
-        self.beta_offset = self.beta_threshold
+        # Offsety startują od zera, aby próg dynamiczny na starcie był
+        # równy progowi skonfigurowanemu przez użytkownika.
+        self.alpha_offset = 0.0
+        self.beta_offset = 0.0
         self._ema_band: dict[str, dict[str, float | None]] = {
             "AF7": {"alpha": None, "beta": None},
             "AF8": {"alpha": None, "beta": None},
@@ -162,8 +164,10 @@ class SignalProcessor:
         self.beta_threshold = settings.beta_threshold
         self.alpha_threshold = settings.alpha_threshold
         self.asym_factor = settings.asym_factor
-        self.beta_offset = settings.beta_threshold
-        self.alpha_offset = settings.alpha_threshold
+        # Po wczytaniu ustawień zachowujemy offset adaptacyjny jako 0,
+        # żeby uniknąć podwajania efektywnego progu decyzji.
+        self.beta_offset = 0.0
+        self.alpha_offset = 0.0
 
     # ── data ingestion ─────────────────────────────────────────────────────
 
