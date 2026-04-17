@@ -133,6 +133,18 @@ class SessionRecorder:
                 "payload": payload or {},
             })
 
+    def record_safety_event(self, *, now_monotonic: float, event_name: str, payload: dict[str, Any] | None = None) -> None:
+        """Zapisuje zdarzenie bezpieczeństwa do analizy R&D po sesji."""
+        with self._lock:
+            if not self._active:
+                return
+            self._record_event({
+                "t": self._relative_time(now_monotonic),
+                "type": "safety_event",
+                "event_name": event_name,
+                "payload": payload or {},
+            })
+
     def record_sample(
         self,
         *,

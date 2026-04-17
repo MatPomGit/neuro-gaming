@@ -386,6 +386,35 @@
                 halign: 'right'
                 text_size: self.size
 
+        BoxLayout:
+            orientation: 'vertical'
+            size_hint_y: None
+            height: '54dp'
+            padding: [10, 4, 10, 4]
+            spacing: 2
+            canvas.before:
+                Color:
+                    rgba: (0.22, 0.08, 0.08, 1) if 'KRYTYCZNY' in root.session_health_text else ((0.18, 0.12, 0.05, 1) if 'OSTRZEŻENIE' in root.session_health_text or 'RYZYKO' in root.session_health_text else (0.06, 0.14, 0.1, 1))
+                RoundedRectangle:
+                    pos: self.pos
+                    size: self.size
+                    radius: [4]
+            Label:
+                text: root.session_health_text
+                font_size: '10sp'
+                bold: True
+                color: (0.98, 0.98, 0.98, 1)
+                halign: 'left'
+                valign: 'middle'
+                text_size: self.size
+            Label:
+                text: root.session_health_suggestion
+                font_size: '9sp'
+                color: (0.84, 0.9, 0.96, 1)
+                halign: 'left'
+                valign: 'middle'
+                text_size: self.size
+
         # Directional Controls
         GridLayout:
             cols: 3

@@ -62,6 +62,7 @@ from src.settings import AppSettings, load_settings, save_settings
 from src.single_instance import acquire_lock, release_lock
 from src.session_recorder import SessionRecorder
 from src.session_replay import ReplayConnector, SessionReplay
+from src.session_health import SessionHealth, SessionHealthMonitor
 from src.signal_processor import (
     DIRECTION_BACKWARD,
     DIRECTION_FORWARD,
@@ -315,14 +316,18 @@ class GameScreen(Screen):
     stream_status_text = StringProperty("Streams: --")
     motion_text = StringProperty("Motion: stable")
     eeg_quality_text = StringProperty("EEG quality: --")
+    session_health_text = StringProperty("Session health: --")
+    session_health_suggestion = StringProperty("Suggestion: --")
 
     _update_event = None
     _was_connected = False
+    _last_safety_signature = ""
 
     def on_enter(self, *args):
         app = App.get_running_app()
         self.connected = app.connector.is_connected
         self._was_connected = self.connected
+        self._last_safety_signature = ""
         self.key_mode = app.controller.key_mode
         app.controller.on_direction_change = self._on_direction_change
         self._update_event = Clock.schedule_interval(self._tick, 0.1)
@@ -345,7 +350,10 @@ class GameScreen(Screen):
             app.processor.notify_stream_reconnected()
         self._was_connected = self.connected
 
-        if app.connector.is_connected:
+        session_assessment = app.session_health_monitor.evaluate(self._collect_session_health(app))
+        self._apply_session_health(app, session_assessment)
+
+        if app.connector.is_connected and not app.safe_pause_active and not app.keyboard_fallback_forced:
             # Update EEG-driven direction
             eeg_dir = app.processor.get_direction()
             app.controller.update(eeg_dir)
@@ -373,6 +381,9 @@ class GameScreen(Screen):
                 quality_snapshot.get("state", "UNKNOWN")
             )
             app.connector._device_state["motion_artifact"] = app.processor.is_motion_artifact_active()
+        elif app.safe_pause_active or app.keyboard_fallback_forced:
+            # Safe pause zatrzymuje komendy EEG, ale pozostawia ręczne sterowanie.
+            app.controller.update(DIRECTION_NONE)
 
         # Zapis próbki do rejestratora sesji (jeśli nagrywanie jest aktywne).
         app.session_recorder.record_sample(
@@ -387,10 +398,80 @@ class GameScreen(Screen):
         )
 
         self.direction = app.controller.current_direction
-        tag = "[EEG]" if app.connector.is_connected else "[KB]"
+        if app.safe_pause_active:
+            tag = "[SAFE]"
+        elif app.connector.is_connected:
+            tag = "[EEG]"
+        else:
+            tag = "[KB]"
         label = _DIR_LABELS.get(self.direction, self.direction)
         self.status_text = f"{tag}  {label}"
         self._update_device_status(app)
+
+    def _collect_session_health(self, app) -> SessionHealth:  # noqa: ANN001
+        """Buduje agregat SessionHealth z telemetrii konektora i procesora."""
+        state = app.connector.device_state
+        battery = state.get("battery_level")
+        global_quality = float(state.get("global_quality_score", 0.0))
+        reconnect_count = 0
+        dropout_rate = 0.0
+        # Wykorzystujemy metryki sesji konektora, jeśli są dostępne.
+        metrics = getattr(app.connector, "_session_metrics", None)
+        if metrics is not None:
+            reconnect_count = int(getattr(metrics, "reconnect_count", 0))
+            dropout_rate = float(getattr(metrics, "dropout_percent", 0.0))
+        return SessionHealth(
+            battery_level=battery if isinstance(battery, int) else None,
+            signal_quality=global_quality,
+            reconnect_count=reconnect_count,
+            dropout_rate=dropout_rate,
+        )
+
+    def _apply_session_health(self, app, assessment) -> None:  # noqa: ANN001
+        """Aktualizuje UI i akcje bezpieczeństwa na podstawie oceny ryzyka."""
+        warnings = " | ".join(assessment.warnings) if assessment.warnings else "Brak alarmów."
+        self.session_health_text = f"Session health: {assessment.status_label} ({warnings})"
+        self.session_health_suggestion = f"Suggestion: {assessment.suggestion or 'Brak dodatkowych zaleceń.'}"
+        app.safe_pause_active = bool(assessment.safe_pause)
+
+        if assessment.switch_to_keyboard_mode and not app.keyboard_fallback_forced:
+            app.keyboard_fallback_forced = True
+            app.safe_pause_active = True
+            app.controller.set_direction(DIRECTION_NONE)
+            logger.warning("Critical dropout detected. Switching to keyboard mode fallback.")
+            app.session_recorder.record_safety_event(
+                now_monotonic=time.monotonic(),
+                event_name="forced_keyboard_mode",
+                payload={"reason": "critical_dropout"},
+            )
+
+        self._log_safety_state_if_changed(app, assessment)
+
+    def _log_safety_state_if_changed(self, app, assessment) -> None:  # noqa: ANN001
+        """Zapisuje zmiany stanu bezpieczeństwa bez duplikowania wpisów co tick."""
+        signature = "|".join(
+            [
+                assessment.level,
+                str(assessment.safe_pause),
+                str(assessment.switch_to_keyboard_mode),
+                ",".join(assessment.warnings),
+            ]
+        )
+        if signature == self._last_safety_signature:
+            return
+        self._last_safety_signature = signature
+        if assessment.level == "OK":
+            return
+        app.session_recorder.record_safety_event(
+            now_monotonic=time.monotonic(),
+            event_name="session_health_alert",
+            payload={
+                "level": assessment.level,
+                "safe_pause": assessment.safe_pause,
+                "warnings": list(assessment.warnings),
+                "suggestion": assessment.suggestion,
+            },
+        )
 
     def _update_bars(self, m: dict) -> None:
         """Normalise band powers to 0–1 for UI progress bars."""
@@ -410,6 +491,8 @@ class GameScreen(Screen):
             self.stream_status_text = "Streams: --"
             self.motion_text = "Motion: --"
             self.eeg_quality_text = "EEG quality: --"
+            self.session_health_text = "Session health: KEYBOARD MODE"
+            self.session_health_suggestion = "Suggestion: Możesz sterować ręcznie klawiaturą."
             return
         state = app.connector.device_state
         battery = state.get("battery_level")
@@ -418,10 +501,16 @@ class GameScreen(Screen):
         sensor_summary = ", ".join(sensors) if sensors else "unknown"
         sample_rate = state.get("sample_rate_hz", 0)
 
-        self.device_text = (
-            f"Device: {state.get('device_name', 'Muse')}  "
-            f"({sample_rate} Hz)"
-        )
+        if app.keyboard_fallback_forced:
+            self.device_text = (
+                f"Device: {state.get('device_name', 'Muse')}  "
+                f"({sample_rate} Hz) [keyboard fallback]"
+            )
+        else:
+            self.device_text = (
+                f"Device: {state.get('device_name', 'Muse')}  "
+                f"({sample_rate} Hz)"
+            )
         self.battery_text = f"Battery: {battery_value}"
         self.sensors_text = f"Sensors: {sensor_summary}"
         stream_activity = state.get("stream_activity", {})
@@ -627,6 +716,8 @@ class GameScreen(Screen):
         app.connector.disconnect()
         app.processor.reset()
         app.controller.reset()
+        app.safe_pause_active = False
+        app.keyboard_fallback_forced = False
         app.root.current = "scan"
 
     def close_app(self) -> None:
@@ -1076,6 +1167,9 @@ class NeuroGamingApp(App):
         self._sound_paths: dict[str, str] = {}
         self._sounds: dict[str, object] = {}
         self.settings = AppSettings()
+        # Flagi bezpieczeństwa używane przez ekran sterowania.
+        self.safe_pause_active = False
+        self.keyboard_fallback_forced = False
 
     def build(self):
         try:
@@ -1088,6 +1182,8 @@ class NeuroGamingApp(App):
         # Core objects shared across screens
         self.processor = SignalProcessor(settings=self.settings)
         self.controller = GameController(settings=self.settings)
+        # Monitor zdrowia sesji agreguje sygnały jakości i podpowiada fallback.
+        self.session_health_monitor = SessionHealthMonitor()
         # Rejestrator sesji diagnostycznej używany przez ekran testowy i eksport CSV.
         self.session_recorder = SessionRecorder()
 

@@ -39,6 +39,11 @@ def test_session_recorder_exports_files_and_report(tmp_path: Path) -> None:
     recorder.record_imu_frame(now_monotonic=0.06, sensor="accelerometer", samples=[[0.0, 0.1, 0.2]])
     recorder.record_ppg_frame(now_monotonic=0.07, channel="PPG_IR", samples=[9.0, 9.1])
     recorder.record_control_event(now_monotonic=0.08, event_name="key_down", payload={"key": "up"})
+    recorder.record_safety_event(
+        now_monotonic=0.09,
+        event_name="forced_keyboard_mode",
+        payload={"reason": "critical_dropout"},
+    )
     recorder.record_sample(
         now_monotonic=0.1,
         direction="LEFT",
@@ -66,6 +71,7 @@ def test_session_recorder_exports_files_and_report(tmp_path: Path) -> None:
     assert '"type": "eeg"' in session_content
     assert '"type": "imu"' in session_content
     assert '"type": "ppg"' in session_content
+    assert '"type": "safety_event"' in session_content
 
     report_path = recorder.export_report(tmp_path / "session.report.json")
     report_content = report_path.read_text(encoding="utf-8")
