@@ -81,6 +81,12 @@ pip install -r requirements.txt
 python main.py
 ```
 
+Replay zapisanej sesji (zastępuje live BLE źródłem z pliku):
+
+```bash
+python main.py --replay sessions/example.session.jsonl
+```
+
 On Windows you can also use:
 
 ```bat
@@ -153,6 +159,49 @@ The APK is placed in the `bin/` directory.
 │  asyncio event loop │ bleak BLE client      │
 └─────────────────────────────────────────────┘
 ```
+
+---
+
+## Session replay format (technical)
+
+Sesje są zapisywane jako **JSON Lines** (`*.session.jsonl`):
+
+1. Pierwsza linia to nagłówek:
+   * `type = "session_header"`
+   * `format_version` (aktualnie `1.0`)
+   * metadane sesji (`device_model`, `active_channels`, `threshold_config`, `app_version`, itp.)
+2. Kolejne linie to zdarzenia czasowe z polem `t` (sekundy od startu):
+   * `type = "eeg"` – ramki EEG (`channel`, `samples`)
+   * `type = "imu"` – ramki IMU (`sensor`, `samples`)
+   * `type = "ppg"` – ramki PPG (`channel`, `samples`)
+   * `type = "control_event"` – zdarzenia sterowania z UI/klawiatury/myszy
+   * `type = "direction_decision"` – decyzja algorytmu z metrykami i confidence
+
+### Version compatibility
+
+* Wersja `1.x` gwarantuje kompatybilność wsteczną w obrębie pola `type` i znaczenia `t`.
+* Nowe pola w zdarzeniach mogą być dodawane, ale istniejące pola nie powinny zmieniać semantyki.
+* Loader replayu ignoruje nieznane pola, co pozwala na bezpieczne rozszerzanie formatu.
+
+### Post-session report
+
+Dla każdej sesji można wyeksportować raport `*.report.json`, który zawiera:
+
+* `average_latency_ms` i `max_latency_ms`,
+* `direction_stability` (0–1),
+* `rejected_windows`.
+
+### CSV compatibility (legacy vs extended)
+
+Eksport diagnostyczny generuje dwa pliki CSV:
+
+* `*.csv` – format legacy (zgodny wstecznie), bez dodatkowych pól
+  diagnostycznych; przeznaczony dla istniejących parserów/analityki.
+* `*.extended.csv` – format rozszerzony zawierający dodatkowo:
+  `confidence`, `rejected_window`, `decision_latency_ms`.
+
+Dzięki temu starsze pipeline’y działają bez zmian, a nowe analizy mogą
+korzystać z pełniejszego zestawu metryk.
 
 ---
 

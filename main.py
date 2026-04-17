@@ -25,6 +25,7 @@ Architecture overview
 import logging
 import math
 import os
+import argparse
 import struct
 import tempfile
 import time
@@ -60,6 +61,7 @@ from src.muse_connector import MuseConnector
 from src.settings import AppSettings, load_settings, save_settings
 from src.single_instance import acquire_lock, release_lock
 from src.session_recorder import SessionRecorder
+from src.session_replay import ReplayConnector, SessionReplay
 from src.signal_processor import (
     DIRECTION_BACKWARD,
     DIRECTION_FORWARD,
@@ -364,6 +366,8 @@ class GameScreen(Screen):
             motion_artifact=app.processor.is_motion_artifact_active(),
             metrics=app.processor.get_metrics(),
             signal_quality=app.processor.get_signal_quality(),
+            confidence=app.processor.get_direction_confidence(),
+            rejected_window=(app.controller.current_direction == DIRECTION_NONE and app.connector.is_connected),
         )
 
         self.direction = app.controller.current_direction
@@ -428,10 +432,20 @@ class GameScreen(Screen):
 
     def _on_key_down(self, window, key, scancode, codepoint, modifiers) -> None:  # noqa: ANN001
         key_name = _keycode_to_name(key, codepoint)
+        App.get_running_app().session_recorder.record_control_event(
+            now_monotonic=time.monotonic(),
+            event_name="key_down",
+            payload={"key": key_name},
+        )
         App.get_running_app().controller.handle_key_down(key_name)
 
     def _on_key_up(self, window, key, *args) -> None:  # noqa: ANN001
         key_name = _keycode_to_name(key, "")
+        App.get_running_app().session_recorder.record_control_event(
+            now_monotonic=time.monotonic(),
+            event_name="key_up",
+            payload={"key": key_name},
+        )
         App.get_running_app().controller.handle_key_up(key_name)
 
     # ── button handlers ────────────────────────────────────────────────────
@@ -763,7 +777,23 @@ class TestScreen(Screen):
             count = recorder.stop()
             self.replay_status = f"Replay: recorded {count} samples"
             return
-        session_name = recorder.start(now_monotonic=time.monotonic())
+        app = App.get_running_app()
+        state = app.connector.device_state
+        session_name = recorder.start(
+            now_monotonic=time.monotonic(),
+            metadata={
+                "device_model": state.get("device_name", "Unknown"),
+                "active_channels": state.get("available_sensors", []),
+                "threshold_config": {
+                    "beta_threshold": app.processor.beta_threshold,
+                    "alpha_threshold": app.processor.alpha_threshold,
+                    "asym_factor": app.processor.asym_factor,
+                    "min_confidence": app.processor.min_confidence,
+                },
+                "app_version": app.version,
+                "sample_rate_hz": state.get("sample_rate_hz", 256),
+            },
+        )
         self.replay_status = f"Replay: recording {session_name}"
 
     def clear_recording(self) -> None:
@@ -779,16 +809,22 @@ class TestScreen(Screen):
         self.replay_status = "Replay: cleared"
 
     def export_recording_csv(self) -> None:
-        """Eksportuje nagraną sesję do pliku CSV w katalogu sessions/."""
+        """Eksportuje nagraną sesję do pliku CSV/JSONL i raportu."""
         recorder = App.get_running_app().session_recorder
         info = recorder.snapshot()
         if info.get("samples", 0) == 0:
             self.replay_status = "Replay: nothing to export"
             return
         session_name = info.get("session_name") or datetime.now(timezone.utc).strftime("session_%Y%m%d_%H%M%S")
-        path = Path("sessions") / f"{session_name}.csv"
-        saved = recorder.export_csv(path)
-        self.replay_status = f"Replay: CSV saved to {saved}"
+        directory = Path("sessions")
+        csv_path = recorder.export_csv(directory / f"{session_name}.csv")
+        csv_extended_path = recorder.export_csv_extended(directory / f"{session_name}.extended.csv")
+        session_path = recorder.export_session(directory / f"{session_name}.session.jsonl")
+        report_path = recorder.export_report(directory / f"{session_name}.report.json")
+        self.replay_status = (
+            "Replay: exported "
+            f"{csv_path.name}, {csv_extended_path.name}, {session_path.name}, {report_path.name}"
+        )
 
     def start_replay(self) -> None:
         """Uruchamia odtwarzanie ostatnio nagranej sesji sterowania."""
@@ -1010,6 +1046,7 @@ class NeuroGamingApp(App):
 
     def __init__(self, **kwargs):
         self._instance_lock = kwargs.pop("instance_lock", None)
+        self._replay_path = kwargs.pop("replay_path", None)
         super().__init__(**kwargs)
         self._log_lines: list[str] = []
         self._max_log_lines = 300
@@ -1029,22 +1066,57 @@ class NeuroGamingApp(App):
             logging.getLogger().setLevel(logging.DEBUG)
         # Core objects shared across screens
         self.processor = SignalProcessor(settings=self.settings)
-        self.connector = MuseConnector(
-            on_eeg=self.processor.add_samples,
-            on_imu=lambda frame: self.processor.add_imu_frame(frame.sensor, frame.samples),
-            on_status=lambda msg: logger.info("[Muse] %s", msg),
-            debug_logging_enabled=self.settings.debug_logging_enabled,
-            stream_config={
-                "eeg": self.settings.stream_eeg_enabled,
-                "accelerometer": self.settings.stream_accelerometer_enabled,
-                "gyroscope": self.settings.stream_gyroscope_enabled,
-                "ppg": self.settings.stream_ppg_enabled,
-                "battery": self.settings.stream_battery_enabled,
-            },
-        )
         self.controller = GameController(settings=self.settings)
         # Rejestrator sesji diagnostycznej używany przez ekran testowy i eksport CSV.
         self.session_recorder = SessionRecorder()
+
+        def _on_eeg(channel: str, samples) -> None:  # noqa: ANN001
+            self.processor.add_samples(channel, samples)
+            self.session_recorder.record_eeg_frame(
+                now_monotonic=time.monotonic(),
+                channel=channel,
+                samples=[float(v) for v in samples.tolist()],
+            )
+
+        def _on_imu_frame(frame) -> None:  # noqa: ANN001
+            self.processor.add_imu_frame(frame.sensor, frame.samples)
+            self.session_recorder.record_imu_frame(
+                now_monotonic=time.monotonic(),
+                sensor=frame.sensor,
+                samples=[[float(v) for v in row] for row in frame.samples.tolist()],
+            )
+
+        def _on_ppg_frame(frame) -> None:  # noqa: ANN001
+            self.session_recorder.record_ppg_frame(
+                now_monotonic=time.monotonic(),
+                channel=frame.channel,
+                samples=[float(v) for v in frame.samples.tolist()],
+            )
+
+        if self._replay_path:
+            replay = SessionReplay(self._replay_path)
+            self.connector = ReplayConnector(
+                replay,
+                on_eeg=_on_eeg,
+                on_imu=lambda sensor, samples: self.processor.add_imu_frame(sensor, samples),
+                on_ppg=lambda _channel, _samples: None,
+            )
+            logger.info("Replay mode enabled from file: %s", self._replay_path)
+        else:
+            self.connector = MuseConnector(
+                on_eeg=_on_eeg,
+                on_imu=_on_imu_frame,
+                on_ppg=_on_ppg_frame,
+                on_status=lambda msg: logger.info("[Muse] %s", msg),
+                debug_logging_enabled=self.settings.debug_logging_enabled,
+                stream_config={
+                    "eeg": self.settings.stream_eeg_enabled,
+                    "accelerometer": self.settings.stream_accelerometer_enabled,
+                    "gyroscope": self.settings.stream_gyroscope_enabled,
+                    "ppg": self.settings.stream_ppg_enabled,
+                    "battery": self.settings.stream_battery_enabled,
+                },
+            )
         self.apply_settings()
         self._prepare_sounds()
 
@@ -1514,8 +1586,12 @@ def _keycode_to_name(key: int, codepoint: str) -> str:
 # ──────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="NeuroGaming launcher")
+    parser.add_argument("--replay", dest="replay_path", help="Replay session JSONL file path")
+    args = parser.parse_args()
+
     app_lock = acquire_lock("neuro_gaming")
     if app_lock is None:
         print("NeuroGaming is already running. Close the existing window and try again.")
         raise SystemExit(0)
-    NeuroGamingApp(instance_lock=app_lock).run()
+    NeuroGamingApp(instance_lock=app_lock, replay_path=args.replay_path).run()
