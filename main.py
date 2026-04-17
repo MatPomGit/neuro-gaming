@@ -30,6 +30,8 @@ import tempfile
 import time
 import threading
 import wave
+from datetime import datetime, timezone
+from pathlib import Path
 
 from kivy.animation import Animation
 from kivy.app import App
@@ -57,6 +59,7 @@ from src.game_controller import GameController
 from src.muse_connector import MuseConnector
 from src.settings import AppSettings, load_settings, save_settings
 from src.single_instance import acquire_lock, release_lock
+from src.session_recorder import SessionRecorder
 from src.signal_processor import (
     DIRECTION_BACKWARD,
     DIRECTION_FORWARD,
@@ -353,6 +356,16 @@ class GameScreen(Screen):
             app.connector._device_state["signal_quality"] = dict(sq)
             app.connector._device_state["motion_artifact"] = app.processor.is_motion_artifact_active()
 
+        # Zapis próbki do rejestratora sesji (jeśli nagrywanie jest aktywne).
+        app.session_recorder.record_sample(
+            now_monotonic=time.monotonic(),
+            direction=app.controller.current_direction,
+            connected=app.connector.is_connected,
+            motion_artifact=app.processor.is_motion_artifact_active(),
+            metrics=app.processor.get_metrics(),
+            signal_quality=app.processor.get_signal_quality(),
+        )
+
         self.direction = app.controller.current_direction
         tag = "[EEG]" if app.connector.is_connected else "[KB]"
         label = _DIR_LABELS.get(self.direction, self.direction)
@@ -614,8 +627,15 @@ class TestScreen(Screen):
     status_text  = StringProperty(
         "W/S/↑/↓ – up/down   A/D/←/→ – left/right   LMB – action   RMB – reset"
     )
+    recorder_status = StringProperty("Recorder: idle")
+    replay_status = StringProperty("Replay: waiting")
+    recording_active = BooleanProperty(False)
 
     _update_event = None
+    _recorder_event = None
+    _replay_event = None
+    _replay_data: list[dict] = []
+    _replay_index = 0
 
     def on_enter(self, *args) -> None:
         self._keys_held: set[str] = set()
@@ -623,11 +643,18 @@ class TestScreen(Screen):
         Window.bind(on_key_down=self._on_key_down)
         Window.bind(on_key_up=self._on_key_up)
         self._update_event = Clock.schedule_interval(self._tick, 1.0 / 60)
+        self._recorder_event = Clock.schedule_interval(self._refresh_recorder_status, 0.25)
 
     def on_leave(self, *args) -> None:
         if self._update_event:
             self._update_event.cancel()
             self._update_event = None
+        if self._recorder_event:
+            self._recorder_event.cancel()
+            self._recorder_event = None
+        if self._replay_event:
+            self._replay_event.cancel()
+            self._replay_event = None
         Animation.cancel_all(self)
         Window.unbind(on_key_down=self._on_key_down)
         Window.unbind(on_key_up=self._on_key_up)
@@ -718,6 +745,85 @@ class TestScreen(Screen):
             t='out_cubic',
         ).start(self)
         self.status_text = "RMB – dot reset to centre"
+
+    def _refresh_recorder_status(self, _dt: float) -> None:
+        """Odświeża podsumowanie rejestratora pokazywane na ekranie."""
+        info = App.get_running_app().session_recorder.snapshot()
+        self.recording_active = bool(info.get("active", False))
+        self.recorder_status = (
+            f"Recorder: {'ON' if self.recording_active else 'OFF'} | "
+            f"samples={info.get('samples', 0)} | "
+            f"duration={info.get('duration', 0.0):.1f}s"
+        )
+
+    def toggle_recording(self) -> None:
+        """Przełącza rejestrowanie sesji EEG do pamięci."""
+        recorder = App.get_running_app().session_recorder
+        if recorder.active:
+            count = recorder.stop()
+            self.replay_status = f"Replay: recorded {count} samples"
+            return
+        session_name = recorder.start(now_monotonic=time.monotonic())
+        self.replay_status = f"Replay: recording {session_name}"
+
+    def clear_recording(self) -> None:
+        """Czyści próbki sesji i zatrzymuje aktywny replay."""
+        recorder = App.get_running_app().session_recorder
+        recorder.stop()
+        recorder.clear()
+        if self._replay_event:
+            self._replay_event.cancel()
+            self._replay_event = None
+        self._replay_data = []
+        self._replay_index = 0
+        self.replay_status = "Replay: cleared"
+
+    def export_recording_csv(self) -> None:
+        """Eksportuje nagraną sesję do pliku CSV w katalogu sessions/."""
+        recorder = App.get_running_app().session_recorder
+        info = recorder.snapshot()
+        if info.get("samples", 0) == 0:
+            self.replay_status = "Replay: nothing to export"
+            return
+        session_name = info.get("session_name") or datetime.now(timezone.utc).strftime("session_%Y%m%d_%H%M%S")
+        path = Path("sessions") / f"{session_name}.csv"
+        saved = recorder.export_csv(path)
+        self.replay_status = f"Replay: CSV saved to {saved}"
+
+    def start_replay(self) -> None:
+        """Uruchamia odtwarzanie ostatnio nagranej sesji sterowania."""
+        recorder = App.get_running_app().session_recorder
+        self._replay_data = recorder.replay_data()
+        if not self._replay_data:
+            self.replay_status = "Replay: no data"
+            return
+        if self._replay_event:
+            self._replay_event.cancel()
+        self._replay_index = 0
+        self.replay_status = "Replay: running"
+        self._replay_event = Clock.schedule_interval(self._replay_tick, 1.0 / 30.0)
+
+    def _replay_tick(self, _dt: float) -> None:
+        """Wykonuje jedną klatkę replayu poprzez przesunięcie kropki."""
+        if self._replay_index >= len(self._replay_data):
+            if self._replay_event:
+                self._replay_event.cancel()
+                self._replay_event = None
+            self.replay_status = "Replay: finished"
+            return
+        item = self._replay_data[self._replay_index]
+        direction = item.get("direction", "NONE")
+        step = 6.0
+        r = self.dot_radius
+        if direction == "FORWARD":
+            self.dot_y = min(self.dot_y + step, Window.height - r)
+        elif direction == "BACKWARD":
+            self.dot_y = max(self.dot_y - step, r)
+        elif direction == "LEFT":
+            self.dot_x = max(self.dot_x - step, r)
+        elif direction == "RIGHT":
+            self.dot_x = min(self.dot_x + step, Window.width - r)
+        self._replay_index += 1
 
     # ── navigation ─────────────────────────────────────────────────────────
 
@@ -937,6 +1043,8 @@ class NeuroGamingApp(App):
             },
         )
         self.controller = GameController(settings=self.settings)
+        # Rejestrator sesji diagnostycznej używany przez ekran testowy i eksport CSV.
+        self.session_recorder = SessionRecorder()
         self.apply_settings()
         self._prepare_sounds()
 
