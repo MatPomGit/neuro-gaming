@@ -191,6 +191,18 @@ Dla każdej sesji można wyeksportować raport `*.report.json`, który zawiera:
 * `direction_stability` (0–1),
 * `rejected_windows`.
 
+### CSV compatibility (legacy vs extended)
+
+Eksport diagnostyczny generuje dwa pliki CSV:
+
+* `*.csv` – format legacy (zgodny wstecznie), bez dodatkowych pól
+  diagnostycznych; przeznaczony dla istniejących parserów/analityki.
+* `*.extended.csv` – format rozszerzony zawierający dodatkowo:
+  `confidence`, `rejected_window`, `decision_latency_ms`.
+
+Dzięki temu starsze pipeline’y działają bez zmian, a nowe analizy mogą
+korzystać z pełniejszego zestawu metryk.
+
 ---
 
 ## Troubleshooting
