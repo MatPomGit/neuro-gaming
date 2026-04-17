@@ -167,6 +167,41 @@ The APK is placed in the `bin/` directory.
 
 ---
 
+## Muse S connection resilience
+
+The connector includes a dedicated connection-state machine with explicit
+states:
+
+* `IDLE`
+* `SCANNING`
+* `CONNECTING`
+* `STREAMING`
+* `RECOVERING`
+* `ERROR`
+
+During normal operation, the EEG stream is supervised by a watchdog. If
+the app does not receive EEG samples for a configured timeout window, it
+automatically enters `RECOVERING` and starts a reconnect sequence with
+progressive backoff (1s → 2s → 4s → 8s by default).
+
+Reconnect progress is reported to the UI through status updates, including:
+
+* current connection state,
+* reconnect attempt number,
+* success/failure information.
+
+At disconnect, the app logs session-level transport metrics for diagnostics:
+
+* total connection duration,
+* reconnect count,
+* average interval between incoming sample callbacks,
+* estimated dropout percentage based on EEG packet sequence gaps.
+
+This behavior is designed to make temporary BLE instability less disruptive
+in real-world use (movement, RF interference, or transient signal loss).
+
+---
+
 ## Contributing
 
 1. Fork the repository and create a feature branch.

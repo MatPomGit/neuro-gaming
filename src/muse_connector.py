@@ -19,8 +19,11 @@ import struct
 import sys
 import threading
 import time
+from dataclasses import dataclass, field
 from datetime import datetime
+from enum import Enum
 from collections.abc import Callable
+from concurrent.futures import Future
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Optional
@@ -116,6 +119,8 @@ SAMPLE_RATE = 256
 BATTERY_LEVEL_UUID = "00002a19-0000-1000-8000-00805f9b34fb"
 # Maksymalny czas (sekundy) oczekiwania na pojawienie się charakterystyk EEG.
 SERVICE_DISCOVERY_TIMEOUT_SECONDS = 30
+STREAM_WATCHDOG_TIMEOUT_SECONDS = 3.0
+RECONNECT_BACKOFF_SECONDS = (1.0, 2.0, 4.0, 8.0)
 
 # Known Muse data characteristics (used for capability reporting in UI)
 SENSOR_CHARACTERISTICS: dict[str, set[str]] = {
@@ -133,6 +138,68 @@ SENSOR_CHARACTERISTICS: dict[str, set[str]] = {
         "273e0011-4c4d-454d-96be-f03bac821358",
     },
 }
+
+
+class ConnectionState(str, Enum):
+    """Stany połączenia z Muse wykorzystywane przez centralną maszynę stanów."""
+
+    IDLE = "IDLE"
+    SCANNING = "SCANNING"
+    CONNECTING = "CONNECTING"
+    STREAMING = "STREAMING"
+    RECOVERING = "RECOVERING"
+    ERROR = "ERROR"
+
+
+@dataclass(slots=True)
+class SessionMetrics:
+    """Metryki jakości sesji EEG logowane po zakończeniu połączenia."""
+
+    connected_since: float | None = None
+    reconnect_count: int = 0
+    sample_interval_sum: float = 0.0
+    sample_interval_count: int = 0
+    total_samples: int = 0
+    dropout_samples: int = 0
+    last_sample_monotonic: float | None = None
+    sequence_by_channel: dict[str, int] = field(default_factory=dict)
+    logged: bool = False
+
+    def reset(self) -> None:
+        """Czyści metryki przy starcie nowej sesji."""
+        self.connected_since = None
+        self.reconnect_count = 0
+        self.sample_interval_sum = 0.0
+        self.sample_interval_count = 0
+        self.total_samples = 0
+        self.dropout_samples = 0
+        self.last_sample_monotonic = None
+        self.sequence_by_channel = {}
+        self.logged = False
+
+    @property
+    def average_sample_interval(self) -> float:
+        """Zwraca średni interwał pomiędzy kolejnymi callbackami EEG."""
+        if self.sample_interval_count == 0:
+            return 0.0
+        return self.sample_interval_sum / self.sample_interval_count
+
+    @property
+    def dropout_percent(self) -> float:
+        """Szacuje procent brakujących próbek względem całej transmisji."""
+        expected = self.total_samples + self.dropout_samples
+        if expected == 0:
+            return 0.0
+        return (self.dropout_samples / expected) * 100.0
+
+
+@dataclass(slots=True)
+class ConnectorDevice:
+    """Lekki opis urządzenia, używany m.in. przy reconnect."""
+
+    address: str
+    name: str = "Muse"
+    rssi: int | None = None
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Known-devices persistent store
@@ -325,6 +392,15 @@ class MuseConnector:
         self._client: Optional[BleakClient] = None
         self._connected = False
         self._battery_task: Optional[asyncio.Task] = None
+        self._watchdog_task: Optional[asyncio.Task] = None
+        self._recovering_task: Optional[asyncio.Task | Future] = None
+        self._manual_disconnect_requested = False
+        self._state = ConnectionState.IDLE
+        self._state_lock = threading.Lock()
+        self._active_device: ConnectorDevice | None = None
+        self._session_metrics = SessionMetrics()
+        self._watchdog_timeout_seconds = STREAM_WATCHDOG_TIMEOUT_SECONDS
+        self._reconnect_backoff_seconds = RECONNECT_BACKOFF_SECONDS
         self._device_state = {
             "device_name": "Unknown",
             "address": "",
@@ -333,6 +409,8 @@ class MuseConnector:
             "sample_rate_hz": SAMPLE_RATE,
             "available_sensors": [],
             "streaming": False,
+            "connection_state": self._state.value,
+            "reconnect_attempts": 0,
         }
 
         self.devices: list[BLEDevice] = []
@@ -461,8 +539,29 @@ class MuseConnector:
         """Emit a human-readable status message via the configured callback."""
         self._status_callback(message)
 
+    def _transition_state(self, new_state: ConnectionState, reason: str = "") -> None:
+        """Centralny handler przejść stanów i raportowania do UI."""
+        with self._state_lock:
+            old_state = self._state
+            self._state = new_state
+            self._device_state["connection_state"] = new_state.value
+            if new_state != ConnectionState.STREAMING:
+                self._device_state["streaming"] = False
+
+        if old_state != new_state:
+            logger.info(
+                "Connection state transition: %s -> %s%s",
+                old_state.value,
+                new_state.value,
+                f" ({reason})" if reason else "",
+            )
+        status_message = (
+            f"[{new_state.value}] {reason}" if reason else f"[{new_state.value}]"
+        )
+        self._emit_status(status_message)
+
     async def _async_scan(self, timeout: float) -> None:
-        self._emit_status("Scanning for Muse devices…")
+        self._transition_state(ConnectionState.SCANNING, "Scanning for Muse devices…")
         found: list[BLEDevice] = []
         devices = await BleakScanner.discover(timeout=timeout)
         for d in devices:
@@ -471,15 +570,25 @@ class MuseConnector:
                 found.append(d)
                 logger.info("Found Muse device: %s (%s)", d.name, d.address)
         self.devices = found
-        self._emit_status(f"Found {len(found)} Muse device(s)")
+        self._transition_state(ConnectionState.IDLE, f"Found {len(found)} Muse device(s)")
 
     async def _async_connect(self, device: BLEDevice) -> None:
         device_name = getattr(device, "name", "Muse") or "Muse"
         device_address = getattr(device, "address", str(device))
-        
-        self._emit_status(f"Connecting to {device_name}…")
+        self._manual_disconnect_requested = False
+        self._transition_state(ConnectionState.CONNECTING, f"Connecting to {device_name}…")
         # Use address instead of BLEDevice object for better stability on Windows
         self._client = BleakClient(device_address)
+        set_callback = getattr(self._client, "set_disconnected_callback", None)
+        if callable(set_callback):
+            callback_result = set_callback(self._on_client_disconnected)
+            if asyncio.iscoroutine(callback_result):
+                await callback_result
+        self._active_device = ConnectorDevice(
+            address=device_address,
+            name=device_name,
+            rssi=getattr(device, "rssi", None),
+        )
         
         try:
             # On Windows, connecting can sometimes be flaky. We try to connect 
@@ -497,8 +606,6 @@ class MuseConnector:
                 await self._client.connect()
 
             self._connected = True
-            device_name = getattr(device, "name", "Muse") or "Muse"
-            device_address = getattr(device, "address", str(device))
             
             self._device_state.update({
                 "device_name": device_name,
@@ -573,12 +680,20 @@ class MuseConnector:
             # Send "start streaming" command
             await self._client.write_gatt_char(CONTROL_UUID, CMD_START)
             self._device_state["streaming"] = True
+            if self._state != ConnectionState.RECOVERING:
+                self._session_metrics.reset()
+            if self._session_metrics.connected_since is None:
+                self._session_metrics.connected_since = time.monotonic()
             self._battery_task = asyncio.create_task(self._battery_poll_loop())
-            self._emit_status(f"Streaming: {subscribed_count} channels")
+            self._start_watchdog()
+            self._transition_state(
+                ConnectionState.STREAMING,
+                f"Streaming: {subscribed_count} channels",
+            )
         except Exception as exc:
             logger.error("Connection failed: %s", exc)
             self._connected = False
-            self._emit_status(f"Error: {exc}")
+            self._transition_state(ConnectionState.ERROR, f"Error: {exc}")
             if self._client:
                 await self._client.disconnect()
             raise
@@ -591,6 +706,8 @@ class MuseConnector:
         try:
             # Preferujemy jawne pobranie usług, aby uniknąć nieaktualnego cache.
             services = await self._client.get_services()
+            if not services:
+                services = self._client.services
         except Exception as exc:
             logger.debug("Service refresh failed, using cached services: %s", exc)
             services = self._client.services
@@ -604,13 +721,13 @@ class MuseConnector:
         """Scan and connect to the first known device found."""
         known = self._store.addresses()
         if not known:
-            self._emit_status("No previously connected devices found.")
+            self._transition_state(ConnectionState.IDLE, "No previously connected devices found.")
             return False
 
         known_names = ", ".join(
             e["name"] or e["address"] for e in self._store.all()
         )
-        self._emit_status(f"Searching for known device(s): {known_names}…")
+        self._transition_state(ConnectionState.SCANNING, f"Searching for known device(s): {known_names}…")
         logger.info("Auto-connect: searching for known addresses %s", known)
 
         all_devices = await BleakScanner.discover(timeout=timeout)
@@ -620,13 +737,21 @@ class MuseConnector:
                 await self._async_connect(d)
                 return True
 
-        self._emit_status("Known device(s) not found nearby.")
+        self._transition_state(ConnectionState.IDLE, "Known device(s) not found nearby.")
         return False
 
-    async def _async_disconnect(self) -> None:
+    async def _async_disconnect(
+        self,
+        *,
+        manual: bool = True,
+        report_state: bool = True,
+        log_session: bool = True,
+    ) -> None:
+        self._manual_disconnect_requested = manual
         if self._battery_task:
             self._battery_task.cancel()
             self._battery_task = None
+        self._cancel_watchdog()
         if self._client and self._client.is_connected:
             try:
                 await self._client.write_gatt_char(CONTROL_UUID, CMD_STOP)
@@ -635,7 +760,10 @@ class MuseConnector:
             await self._client.disconnect()
         self._connected = False
         self._device_state["streaming"] = False
-        self._emit_status("Disconnected")
+        if log_session:
+            self._log_session_metrics("disconnect")
+        if report_state:
+            self._transition_state(ConnectionState.IDLE, "Disconnected")
 
     def _make_eeg_handler(self, channel: str) -> Callable:
         """Return a BLE notification callback bound to *channel*."""
@@ -646,7 +774,8 @@ class MuseConnector:
                 return
 
             try:
-                _, samples = _parse_eeg_packet(bytes(data))
+                sequence, samples = _parse_eeg_packet(bytes(data))
+                self._update_session_metrics(channel, sequence, len(samples))
                 self._on_eeg(channel, samples)
                 
                 if self._debug_logging_enabled:
@@ -704,3 +833,117 @@ class MuseConnector:
         while self._client and self._client.is_connected:
             self._device_state["battery_level"] = await self._read_battery_level()
             await asyncio.sleep(20)
+
+    def _start_watchdog(self) -> None:
+        """Uruchamia watchdog, który pilnuje czy napływają próbki EEG."""
+        self._cancel_watchdog()
+        self._watchdog_task = asyncio.create_task(self._stream_watchdog_loop())
+
+    def _cancel_watchdog(self) -> None:
+        """Zatrzymuje watchdog streamu EEG, jeżeli był aktywny."""
+        if self._watchdog_task:
+            self._watchdog_task.cancel()
+            self._watchdog_task = None
+
+    async def _stream_watchdog_loop(self) -> None:
+        """Wykrywa timeout próbek i uruchamia automatyczne odzyskiwanie połączenia."""
+        while self._connected and not self._manual_disconnect_requested:
+            await asyncio.sleep(0.5)
+            if self._state != ConnectionState.STREAMING:
+                continue
+            last_sample = self._session_metrics.last_sample_monotonic
+            if last_sample is None:
+                continue
+            if time.monotonic() - last_sample <= self._watchdog_timeout_seconds:
+                continue
+            logger.warning(
+                "EEG watchdog timeout: no samples for %.2fs.",
+                self._watchdog_timeout_seconds,
+            )
+            if not self._recovering_task or self._recovering_task.done():
+                self._recovering_task = asyncio.create_task(
+                    self._recover_stream("No EEG samples received within timeout"),
+                )
+            return
+
+    def _on_client_disconnected(self, _client: BleakClient) -> None:
+        """Callback bleak-a uruchamiany przy niespodziewanej utracie połączenia."""
+        if self._manual_disconnect_requested or self._loop is None:
+            return
+        if self._state not in {ConnectionState.STREAMING, ConnectionState.CONNECTING}:
+            return
+        logger.warning("Unexpected BLE disconnect detected.")
+        if not self._recovering_task or self._recovering_task.done():
+            self._recovering_task = asyncio.run_coroutine_threadsafe(
+                self._recover_stream("Bluetooth link lost"),
+                self._loop,
+            )
+
+    async def _recover_stream(self, reason: str) -> None:
+        """Próbuje odzyskać streaming używając polityki backoff."""
+        if self._active_device is None:
+            self._transition_state(ConnectionState.ERROR, "Recovery failed: no active device.")
+            return
+
+        self._transition_state(ConnectionState.RECOVERING, reason)
+
+        for attempt, backoff in enumerate(self._reconnect_backoff_seconds, start=1):
+            self._session_metrics.reconnect_count += 1
+            self._device_state["reconnect_attempts"] = attempt
+            self._emit_status(
+                f"[{ConnectionState.RECOVERING.value}] Reconnect attempt {attempt}/{len(self._reconnect_backoff_seconds)} in {backoff:.0f}s",
+            )
+            await asyncio.sleep(backoff)
+            try:
+                await self._async_disconnect(manual=False, report_state=False, log_session=False)
+                await self._async_connect(self._active_device)
+                self._device_state["reconnect_attempts"] = attempt
+                self._emit_status(
+                    f"[{ConnectionState.STREAMING.value}] Reconnect succeeded on attempt {attempt}",
+                )
+                return
+            except Exception as exc:
+                logger.warning("Reconnect attempt %d failed: %s", attempt, exc)
+
+        self._transition_state(
+            ConnectionState.ERROR,
+            f"Recovery failed after {len(self._reconnect_backoff_seconds)} attempts.",
+        )
+
+    def _update_session_metrics(self, channel: str, sequence: int, sample_count: int) -> None:
+        """Aktualizuje metryki sesji po odebraniu pakietu EEG."""
+        now = time.monotonic()
+        if self._session_metrics.last_sample_monotonic is not None:
+            interval = now - self._session_metrics.last_sample_monotonic
+            self._session_metrics.sample_interval_sum += interval
+            self._session_metrics.sample_interval_count += 1
+        self._session_metrics.last_sample_monotonic = now
+        self._session_metrics.total_samples += sample_count
+
+        prev_sequence = self._session_metrics.sequence_by_channel.get(channel)
+        if prev_sequence is not None:
+            sequence_gap = (sequence - prev_sequence) % 65536
+            if sequence_gap > 1:
+                missing_packets = sequence_gap - 1
+                self._session_metrics.dropout_samples += missing_packets * sample_count
+        self._session_metrics.sequence_by_channel[channel] = sequence
+
+    def _log_session_metrics(self, reason: str) -> None:
+        """Loguje podsumowanie sesji (czas, reconnect, średni interwał i dropout)."""
+        if self._session_metrics.logged:
+            return
+        if self._session_metrics.connected_since is None:
+            return
+        duration = max(0.0, time.monotonic() - self._session_metrics.connected_since)
+        logger.info(
+            (
+                "EEG session metrics (%s): duration=%.2fs, reconnects=%d, "
+                "avg_sample_interval=%.4fs, dropouts=%.2f%%"
+            ),
+            reason,
+            duration,
+            self._session_metrics.reconnect_count,
+            self._session_metrics.average_sample_interval,
+            self._session_metrics.dropout_percent,
+        )
+        self._session_metrics.logged = True
