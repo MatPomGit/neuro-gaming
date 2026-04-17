@@ -267,7 +267,53 @@ class SessionRecorder:
         return output
 
     def export_csv(self, destination: Path | str) -> Path:
-        """Eksportuje uproszczoną serię decyzji do CSV."""
+        """Eksportuje serię decyzji do CSV w formacie zgodnym wstecznie.
+
+        Uwaga:
+            Ten eksport zachowuje historyczny układ kolumn używany wcześniej
+            przez moduł diagnostyczny. Dzięki temu starsze narzędzia analityczne
+            nie wymagają zmian po rozszerzeniu rejestratora.
+        """
+        output = Path(destination)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        with self._lock:
+            rows = list(self._samples)
+            session_name = self._session_name
+
+        with output.open("w", encoding="utf-8", newline="") as fh:
+            writer = csv.writer(fh)
+            fh.write(f"# {json.dumps({'session_name': session_name}, ensure_ascii=False)}\n")
+            writer.writerow(
+                [
+                    "relative_time",
+                    "direction",
+                    "connected",
+                    "motion_artifact",
+                    "alpha_left",
+                    "alpha_right",
+                    "beta_left",
+                    "beta_right",
+                    "quality_avg",
+                ]
+            )
+            for sample in rows:
+                writer.writerow(
+                    [
+                        f"{sample.relative_time:.4f}",
+                        sample.direction,
+                        int(sample.connected),
+                        int(sample.motion_artifact),
+                        f"{sample.alpha_left:.6f}",
+                        f"{sample.alpha_right:.6f}",
+                        f"{sample.beta_left:.6f}",
+                        f"{sample.beta_right:.6f}",
+                        f"{sample.quality_avg:.6f}",
+                    ]
+                )
+        return output
+
+    def export_csv_extended(self, destination: Path | str) -> Path:
+        """Eksportuje rozszerzony CSV z dodatkowymi metrykami decyzji."""
         output = Path(destination)
         output.parent.mkdir(parents=True, exist_ok=True)
         with self._lock:

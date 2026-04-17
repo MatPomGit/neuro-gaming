@@ -53,8 +53,12 @@ def test_session_recorder_exports_files_and_report(tmp_path: Path) -> None:
 
     csv_path = recorder.export_csv(tmp_path / "session.csv")
     content = csv_path.read_text(encoding="utf-8")
-    assert "decision_latency_ms" in content
+    assert "relative_time,direction,connected,motion_artifact" in content
     assert "LEFT" in content
+
+    extended_csv_path = recorder.export_csv_extended(tmp_path / "session.extended.csv")
+    extended_content = extended_csv_path.read_text(encoding="utf-8")
+    assert "decision_latency_ms" in extended_content
 
     session_path = recorder.export_session(tmp_path / "session.session.jsonl")
     session_content = session_path.read_text(encoding="utf-8")

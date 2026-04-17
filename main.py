@@ -818,9 +818,13 @@ class TestScreen(Screen):
         session_name = info.get("session_name") or datetime.now(timezone.utc).strftime("session_%Y%m%d_%H%M%S")
         directory = Path("sessions")
         csv_path = recorder.export_csv(directory / f"{session_name}.csv")
+        csv_extended_path = recorder.export_csv_extended(directory / f"{session_name}.extended.csv")
         session_path = recorder.export_session(directory / f"{session_name}.session.jsonl")
         report_path = recorder.export_report(directory / f"{session_name}.report.json")
-        self.replay_status = f"Replay: exported {csv_path.name}, {session_path.name}, {report_path.name}"
+        self.replay_status = (
+            "Replay: exported "
+            f"{csv_path.name}, {csv_extended_path.name}, {session_path.name}, {report_path.name}"
+        )
 
     def start_replay(self) -> None:
         """Uruchamia odtwarzanie ostatnio nagranej sesji sterowania."""
