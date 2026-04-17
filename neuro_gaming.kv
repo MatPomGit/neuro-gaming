@@ -856,12 +856,26 @@
         spacing: 12
 
         Label:
-            text: 'CONTROL DIAGNOSTICS'
+            text: 'CONTROL DIAGNOSTICS + SESSION REPLAY'
             font_size: '18sp'
             bold: True
             size_hint_y: None
             height: '40dp'
             color: (1, 1, 1, 1)
+
+        Label:
+            text: root.recorder_status
+            font_size: '11sp'
+            size_hint_y: None
+            height: '22dp'
+            color: (0.3, 0.85, 0.6, 1) if root.recording_active else (0.7, 0.7, 0.75, 1)
+
+        Label:
+            text: root.replay_status
+            font_size: '11sp'
+            size_hint_y: None
+            height: '22dp'
+            color: (0.45, 0.75, 1.0, 1)
 
         Widget:
             size_hint_y: 1
@@ -869,7 +883,7 @@
         BoxLayout:
             orientation: 'vertical'
             size_hint_y: None
-            height: '110dp'
+            height: '160dp'
             padding: 16
             spacing: 8
             canvas.before:
@@ -897,6 +911,31 @@
                     font_size: '11sp'
                     bold: True
                     color: (0.8, 0.2, 0.2, 1) if root.right_active else (0.4, 0.4, 0.5, 1)
+
+            BoxLayout:
+                size_hint_y: None
+                height: '40dp'
+                spacing: 8
+                Button:
+                    text: 'STOP REC' if root.recording_active else 'START REC'
+                    background_normal: ''
+                    background_color: (0.75, 0.2, 0.2, 1) if root.recording_active else (0.18, 0.55, 1.0, 1)
+                    on_release: root.toggle_recording()
+                Button:
+                    text: 'EXPORT CSV'
+                    background_normal: ''
+                    background_color: (0.12, 0.38, 0.22, 1)
+                    on_release: root.export_recording_csv()
+                Button:
+                    text: 'REPLAY'
+                    background_normal: ''
+                    background_color: (0.28, 0.22, 0.52, 1)
+                    on_release: root.start_replay()
+                Button:
+                    text: 'CLEAR'
+                    background_normal: ''
+                    background_color: (0.25, 0.25, 0.28, 1)
+                    on_release: root.clear_recording()
 
             Button:
                 text: 'EXIT DIAGNOSTICS'
