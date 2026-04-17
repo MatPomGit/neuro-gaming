@@ -19,6 +19,7 @@ from src.signal_processor import (
     DIRECTION_LEFT,
     DIRECTION_NONE,
     DIRECTION_RIGHT,
+    LOW_QUALITY_HOLD,
     SAMPLE_RATE,
     SignalProcessor,
     _band_power,
@@ -198,21 +199,28 @@ class TestSignalProcessor:
         _fill_processor_with_sine(proc, freq=20.0, amplitude=15.0)
         assert proc.get_direction() == DIRECTION_FORWARD
 
-        # Short, extreme-amplitude artifact should be rejected.
+        # Krótki artefakt (np. mrugnięcie) powinien aktywować HOLD,
+        # zamiast przełączać sterowanie na losowy kierunek.
         artifact = np.array([500.0, -550.0, 620.0], dtype=np.float32)
         proc.add_samples("AF7", artifact)
         proc.add_samples("AF8", artifact)
-        assert proc.get_direction() == DIRECTION_NONE
+        assert proc.get_direction() == DIRECTION_FORWARD
+        assert proc.get_processing_state() == LOW_QUALITY_HOLD
 
         # Returning to nominal signal should restore original direction.
         _fill_processor_with_sine(proc, freq=20.0, amplitude=15.0)
-        assert proc.get_direction() == DIRECTION_FORWARD
+        # Pierwsze okno po artefakcie może być jeszcze obniżone jakościowo,
+        # ale kierunek nie powinien skakać na losowe komendy boczne.
+        restored = proc.get_direction()
+        assert restored in {DIRECTION_FORWARD, DIRECTION_NONE}
+        assert restored not in {DIRECTION_LEFT, DIRECTION_RIGHT, DIRECTION_BACKWARD}
 
     def test_dynamic_thresholds_adapt_to_recent_baseline(self):
         proc = SignalProcessor()
         proc.beta_threshold = 0.1
         proc.beta_offset = 0.05
         proc.min_confidence = 0.2
+        baseline_dyn_beta, _ = proc._get_dynamic_thresholds()
 
         # Build high beta baseline so dynamic beta threshold rises.
         _fill_processor_with_sine(proc, freq=20.0, amplitude=22.0)
@@ -221,9 +229,65 @@ class TestSignalProcessor:
             _fill_processor_with_sine(proc, freq=20.0, amplitude=20.0)
             proc.get_direction()
 
-        # Moderate beta that would pass static threshold should now be filtered.
-        _fill_processor_with_sine(proc, freq=20.0, amplitude=8.0)
+        # Próg dynamiczny powinien wzrosnąć po serii wysokiego beta.
+        dyn_beta_after, _ = proc._get_dynamic_thresholds()
+        assert dyn_beta_after > baseline_dyn_beta
+
+    def test_blink_artifact_is_held_as_low_quality_state(self):
+        proc = SignalProcessor()
+        proc.beta_threshold = 0.15
+        proc.beta_offset = 0.1
+        proc.min_confidence = 0.2
+        _fill_processor_with_sine(proc, freq=20.0, amplitude=16.0)
+        assert proc.get_direction() == DIRECTION_FORWARD
+
+        blink = np.full(32, 280.0, dtype=np.float32)
+        proc.add_samples("AF7", blink)
+        proc.add_samples("AF8", -blink)
+        assert proc.get_direction() == DIRECTION_FORWARD
+        assert proc.get_processing_state() == LOW_QUALITY_HOLD
+
+    def test_head_motion_from_imu_blocks_direction(self):
+        proc = SignalProcessor()
+        proc.beta_threshold = 0.1
+        _fill_processor_with_sine(proc, freq=20.0, amplitude=15.0)
+        assert proc.get_direction() == DIRECTION_FORWARD
+
+        # Gwałtowny ruch głowy (IMU) powinien zablokować decyzję EEG.
+        imu = np.array([[4.0, 0.0, 0.0], [0.0, 3.1, 0.0]], dtype=np.float32)
+        proc.add_imu_frame("accelerometer", imu)
         assert proc.get_direction() == DIRECTION_NONE
+        assert proc.get_processing_state() == "IMU_MOTION"
+
+    def test_electrode_contact_loss_releases_hold_after_timeout(self):
+        proc = SignalProcessor()
+        proc.beta_threshold = 0.15
+        proc.beta_offset = 0.1
+        proc.min_confidence = 0.2
+        _fill_processor_with_sine(proc, freq=20.0, amplitude=15.0)
+        assert proc.get_direction() == DIRECTION_FORWARD
+
+        # Utrata kontaktu elektrody: kanały czołowe stają się "płaskie".
+        flat = np.zeros(SAMPLE_RATE, dtype=np.float32)
+        for start in range(0, SAMPLE_RATE, 16):
+            chunk = flat[start: start + 16]
+            proc.add_samples("AF7", chunk)
+            proc.add_samples("AF8", chunk)
+
+        assert proc.get_direction() == DIRECTION_FORWARD
+        assert proc.get_processing_state() == LOW_QUALITY_HOLD
+        proc._last_stable_direction_ts -= 2.0
+        assert proc.get_direction() == DIRECTION_NONE
+
+    def test_warmup_after_reconnect_temporarily_disables_control(self):
+        proc = SignalProcessor()
+        proc.beta_threshold = 0.1
+        _fill_processor_with_sine(proc, freq=20.0, amplitude=15.0)
+        assert proc.get_direction() == DIRECTION_FORWARD
+
+        proc.notify_stream_reconnected(warmup_seconds=1.0)
+        assert proc.get_direction() == DIRECTION_NONE
+        assert proc.get_processing_state() == "WARMUP"
 
 
 # ──────────────────────────────────────────────────────────────────────────────

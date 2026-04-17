@@ -317,10 +317,12 @@ class GameScreen(Screen):
     eeg_quality_text = StringProperty("EEG quality: --")
 
     _update_event = None
+    _was_connected = False
 
     def on_enter(self, *args):
         app = App.get_running_app()
         self.connected = app.connector.is_connected
+        self._was_connected = self.connected
         self.key_mode = app.controller.key_mode
         app.controller.on_direction_change = self._on_direction_change
         self._update_event = Clock.schedule_interval(self._tick, 0.1)
@@ -338,6 +340,10 @@ class GameScreen(Screen):
     def _tick(self, dt) -> None:  # noqa: ANN001
         app = App.get_running_app()
         self.connected = app.connector.is_connected
+        if self.connected and not self._was_connected:
+            # Warm-up po reconnect minimalizuje fałszywe komendy na starcie streamu.
+            app.processor.notify_stream_reconnected()
+        self._was_connected = self.connected
 
         if app.connector.is_connected:
             # Update EEG-driven direction
@@ -350,12 +356,22 @@ class GameScreen(Screen):
             self._update_bars(m)
 
             # Refresh per-channel signal quality
-            sq = app.processor.get_signal_quality()
-            self.quality_tp9  = sq.get("TP9",  0.0)
-            self.quality_af7  = sq.get("AF7",  0.0)
-            self.quality_af8  = sq.get("AF8",  0.0)
-            self.quality_tp10 = sq.get("TP10", 0.0)
+            quality_snapshot = app.processor.get_quality_snapshot()
+            sq = quality_snapshot.get("channels", {})
+            self.quality_tp9  = float(sq.get("TP9",  0.0))
+            self.quality_af7  = float(sq.get("AF7",  0.0))
+            self.quality_af8  = float(sq.get("AF8",  0.0))
+            self.quality_tp10 = float(sq.get("TP10", 0.0))
             app.connector._device_state["signal_quality"] = dict(sq)
+            app.connector._device_state["global_quality_score"] = float(
+                quality_snapshot.get("global_score", 0.0)
+            )
+            app.connector._device_state["session_quality_score"] = float(
+                quality_snapshot.get("session_score", 0.0)
+            )
+            app.connector._device_state["processor_state"] = str(
+                quality_snapshot.get("state", "UNKNOWN")
+            )
             app.connector._device_state["motion_artifact"] = app.processor.is_motion_artifact_active()
 
         # Zapis próbki do rejestratora sesji (jeśli nagrywanie jest aktywne).
@@ -417,9 +433,14 @@ class GameScreen(Screen):
         motion = bool(state.get("motion_artifact", False))
         self.motion_text = "Motion: artifact risk" if motion else "Motion: stable"
         quality = state.get("signal_quality", {})
+        global_quality = float(state.get("global_quality_score", 0.0))
+        session_quality = float(state.get("session_quality_score", 0.0))
         if quality:
-            avg_quality = sum(float(v) for v in quality.values()) / max(1, len(quality))
-            self.eeg_quality_text = f"EEG quality: {int(avg_quality * 100)}%"
+            processor_state = state.get("processor_state", "UNKNOWN")
+            self.eeg_quality_text = (
+                f"EEG quality: {int(global_quality * 100)}% "
+                f"(session {int(session_quality * 100)}%, state {processor_state})"
+            )
         else:
             self.eeg_quality_text = "EEG quality: --"
 

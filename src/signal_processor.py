@@ -66,6 +66,8 @@ POWER_SPIKE_FACTOR = 4.0       # sudden power jump/drop between windows
 MOTION_ARTEFACT_LATCH_SECONDS = 0.8
 MOTION_ARTEFACT_ACCEL_THRESHOLD = 2.4
 MOTION_ARTEFACT_GYRO_THRESHOLD = 130.0
+LOW_QUALITY_HOLD_SECONDS = 1.2
+WARMUP_AFTER_RECONNECT_SECONDS = 1.5
 
 # Adaptive baselines
 EMA_ALPHA = 0.2
@@ -76,6 +78,7 @@ DIRECTION_FORWARD  = "FORWARD"
 DIRECTION_BACKWARD = "BACKWARD"
 DIRECTION_LEFT     = "LEFT"
 DIRECTION_RIGHT    = "RIGHT"
+LOW_QUALITY_HOLD = "LOW_QUALITY_HOLD"
 
 CHANNELS = ("TP9", "AF7", "AF8", "TP10")
 CALIBRATION_STAGES = ("baseline_rest", "focus_task", "relax_task")
@@ -167,9 +170,21 @@ class SignalProcessor:
         }
         self._last_total_power: dict[str, float | None] = {ch: None for ch in CHANNELS}
         self._artifact_channels: dict[str, bool] = {ch: False for ch in CHANNELS}
+        self._power_spike_channels: dict[str, bool] = {ch: False for ch in CHANNELS}
+        self._saturated_channels: dict[str, bool] = {ch: False for ch in CHANNELS}
         self._last_confidence = 0.0
         # Znacznik artefaktu ruchowego (IMU) blokujący decyzje EEG przez krótki czas.
         self._motion_artifact_until = 0.0
+        # Ostatni stabilny kierunek, który możemy utrzymać podczas spadku jakości.
+        self._last_stable_direction = DIRECTION_NONE
+        self._last_stable_direction_ts = 0.0
+        self._processing_state = DIRECTION_NONE
+        self._channel_quality_cache: dict[str, float] = {ch: 0.0 for ch in CHANNELS}
+        self._global_quality_score = 0.0
+        self._session_quality_score = 0.0
+        self._asymmetry_sign_history: deque[int] = deque(maxlen=6)
+        self._temporal_asymmetry_unstable = False
+        self._warmup_until = 0.0
         if settings is not None:
             self.apply_settings(settings)
 
@@ -192,9 +207,15 @@ class SignalProcessor:
         if len(samples) and float(np.max(np.abs(samples))) > MAX_SAMPLE_AMPLITUDE:
             with self._lock:
                 self._artifact_channels[channel] = True
+                self._saturated_channels[channel] = True
             return
         with self._lock:
             self._buffers[channel].extend(samples.tolist())
+            if len(samples):
+                # Saturacja kanału: wartości blisko maksymalnej amplitudy.
+                self._saturated_channels[channel] = (
+                    float(np.max(np.abs(samples))) > MAX_SAMPLE_AMPLITUDE * 0.9
+                )
             if self._calibrating:
                 self._calib_samples[channel].extend(samples.tolist())
                 if self._current_stage:
@@ -207,8 +228,25 @@ class SignalProcessor:
                 buf.clear()
             self._last_total_power = {ch: None for ch in CHANNELS}
             self._artifact_channels = {ch: False for ch in CHANNELS}
+            self._power_spike_channels = {ch: False for ch in CHANNELS}
+            self._saturated_channels = {ch: False for ch in CHANNELS}
             self._last_confidence = 0.0
             self._motion_artifact_until = 0.0
+            self._last_stable_direction = DIRECTION_NONE
+            self._last_stable_direction_ts = 0.0
+            self._processing_state = DIRECTION_NONE
+            self._channel_quality_cache = {ch: 0.0 for ch in CHANNELS}
+            self._global_quality_score = 0.0
+            self._session_quality_score = 0.0
+            self._asymmetry_sign_history.clear()
+            self._temporal_asymmetry_unstable = False
+            self._warmup_until = 0.0
+
+    def notify_stream_reconnected(self, warmup_seconds: float = WARMUP_AFTER_RECONNECT_SECONDS) -> None:
+        """Aktywuje warm-up po reconnect, aby chwilowo zablokować sterowanie."""
+        with self._lock:
+            self._warmup_until = time.monotonic() + max(0.0, warmup_seconds)
+            self._processing_state = "WARMUP"
 
     def add_imu_frame(self, sensor: str, samples: np.ndarray) -> None:
         """Analizuje ramkę IMU i oznacza potencjalny artefakt ruchowy.
@@ -418,10 +456,16 @@ class SignalProcessor:
                 if self._artifact_channels[ch]:
                     alpha, beta = 0.0, 0.0
                     self._artifact_channels[ch] = False
+                    self._power_spike_channels[ch] = False
                 elif prev_power is not None and prev_power > 1e-6:
                     ratio = total_power / prev_power
                     if ratio > POWER_SPIKE_FACTOR or ratio < (1.0 / POWER_SPIKE_FACTOR):
                         alpha, beta = 0.0, 0.0
+                        self._power_spike_channels[ch] = True
+                    else:
+                        self._power_spike_channels[ch] = False
+                else:
+                    self._power_spike_channels[ch] = False
                 self._last_total_power[ch] = max(total_power, 1e-6)
                 if ch in self._baseline_mean:
                     bm = self._baseline_mean[ch]
@@ -452,13 +496,74 @@ class SignalProcessor:
         """Return confidence (0-1) for the latest direction decision."""
         return self._last_confidence
 
+    def get_processing_state(self) -> str:
+        """Zwraca aktualny stan pipeline'u decyzyjnego."""
+        return self._processing_state
+
+    def get_quality_snapshot(self) -> dict[str, float | str | dict[str, float]]:
+        """Zwraca per-kanał i globalne metryki jakości do publikacji w UI."""
+        channel_quality = self.get_signal_quality()
+        return {
+            "channels": channel_quality,
+            "global_score": self._global_quality_score,
+            "session_score": self._session_quality_score,
+            "state": self._processing_state,
+            "warmup_remaining": max(0.0, self._warmup_until - time.monotonic()),
+        }
+
+    def _update_temporal_asymmetry(self, metrics: dict[str, dict[str, float]]) -> None:
+        """Aktualizuje heurystykę niestabilnej asymetrii międzypółkulowej."""
+        alpha_diff = metrics["AF7"]["alpha"] - metrics["AF8"]["alpha"]
+        if abs(alpha_diff) < 0.2:
+            self._temporal_asymmetry_unstable = False
+            return
+        sign = 1 if alpha_diff > 0 else -1
+        self._asymmetry_sign_history.append(sign)
+        if len(self._asymmetry_sign_history) < 4:
+            return
+        flips = sum(
+            1
+            for idx in range(1, len(self._asymmetry_sign_history))
+            if self._asymmetry_sign_history[idx] != self._asymmetry_sign_history[idx - 1]
+        )
+        # 2+ zmian znaku w krótkim oknie wskazuje artefakt (mrugnięcia/ruch).
+        self._temporal_asymmetry_unstable = flips >= 2
+
+    def _quality_gate(self, metrics: dict[str, dict[str, float]]) -> tuple[bool, str]:
+        """Wykonuje quality gate przed mapowaniem kierunku."""
+        quality_scores = self.get_signal_quality()
+        frontal_quality = (quality_scores["AF7"] + quality_scores["AF8"]) / 2.0
+        self._update_temporal_asymmetry(metrics)
+        now = time.monotonic()
+
+        if now < self._warmup_until:
+            return False, "WARMUP"
+        if self.is_motion_artifact_active():
+            return False, "IMU_MOTION"
+        if frontal_quality < 0.35:
+            return False, "LOW_CHANNEL_QUALITY"
+        if self._temporal_asymmetry_unstable:
+            return False, "TEMPORAL_ASYMMETRY"
+        return True, "OK"
+
     def get_direction(self) -> str:
         """Determine the current directional command from EEG metrics.
 
         Returns one of the ``DIRECTION_*`` constants defined in this module.
         """
         m = self.get_metrics()
-        if self.is_motion_artifact_active():
+        gate_passed, gate_reason = self._quality_gate(m)
+        now = time.monotonic()
+        if not gate_passed:
+            hold_is_valid = (
+                self._last_stable_direction != DIRECTION_NONE
+                and (now - self._last_stable_direction_ts) <= LOW_QUALITY_HOLD_SECONDS
+            )
+            if hold_is_valid and gate_reason not in {"WARMUP", "IMU_MOTION"}:
+                self._processing_state = LOW_QUALITY_HOLD
+                self._last_confidence = max(0.0, min(1.0, self._global_quality_score))
+                return self._last_stable_direction
+            self._processing_state = gate_reason
             self._last_confidence = 0.0
             return DIRECTION_NONE
 
@@ -480,8 +585,7 @@ class SignalProcessor:
             (alpha_avg - dyn_alpha_threshold) / (abs(dyn_alpha_threshold) + 1e-6),
             (alpha_avg - beta_avg) / (abs(alpha_avg) + abs(beta_avg) + 1e-6),
         )
-        quality_scores = self.get_signal_quality()
-        quality = (quality_scores["AF7"] + quality_scores["AF8"]) / 2.0
+        quality = self._global_quality_score
 
         # Priority: FORWARD > lateral (LEFT/RIGHT) > BACKWARD > NONE
         direction = DIRECTION_NONE
@@ -499,7 +603,11 @@ class SignalProcessor:
         self._last_confidence = float(max(0.0, min(1.0, 0.65 * quality + 0.35 * margin_norm)))
         self._update_ema_baselines(m)
         if direction == DIRECTION_NONE or self._last_confidence < self.min_confidence:
+            self._processing_state = DIRECTION_NONE
             return DIRECTION_NONE
+        self._last_stable_direction = direction
+        self._last_stable_direction_ts = now
+        self._processing_state = "ACTIVE"
         return direction
 
     def is_motion_artifact_active(self) -> bool:
@@ -516,6 +624,7 @@ class SignalProcessor:
         """
         scores: dict[str, float] = {}
         with self._lock:
+            motion_active = time.monotonic() < self._motion_artifact_until
             for ch, buf in self._buffers.items():
                 if len(buf) < BUFFER_SIZE // 4:
                     scores[ch] = 0.0
@@ -531,5 +640,23 @@ class SignalProcessor:
                     quality = 0.1   # saturated / movement artefact
                 else:
                     quality = min(1.0, var / 100.0)
+                # Heurystyki artefaktów obniżające score jakości.
+                if self._power_spike_channels.get(ch, False):
+                    quality *= 0.25
+                if self._saturated_channels.get(ch, False):
+                    quality *= 0.2
+                if motion_active:
+                    quality *= 0.35
+                if self._temporal_asymmetry_unstable and ch in {"AF7", "AF8"}:
+                    quality *= 0.5
                 scores[ch] = fill * quality
+            self._channel_quality_cache = dict(scores)
+            self._global_quality_score = float(sum(scores.values()) / max(1, len(scores)))
+            # Globalny score sesji jako wygładzana EMA bieżącej jakości.
+            if self._session_quality_score == 0.0:
+                self._session_quality_score = self._global_quality_score
+            else:
+                self._session_quality_score = float(
+                    0.1 * self._global_quality_score + 0.9 * self._session_quality_score
+                )
         return scores
