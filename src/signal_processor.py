@@ -32,10 +32,12 @@ Control mapping
 import logging
 import time
 from collections import deque
+from datetime import datetime, timezone
 from typing import Optional
 
 import numpy as np
 
+from src.calibration_profiles import CalibrationProfile, CalibrationProfileStore
 from src.settings import AppSettings
 
 logger = logging.getLogger(__name__)
@@ -76,6 +78,9 @@ DIRECTION_LEFT     = "LEFT"
 DIRECTION_RIGHT    = "RIGHT"
 
 CHANNELS = ("TP9", "AF7", "AF8", "TP10")
+CALIBRATION_STAGES = ("baseline_rest", "focus_task", "relax_task")
+MIN_CALIBRATION_SECONDS = 4.0
+MIN_CALIBRATION_QUALITY = 0.35
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -141,8 +146,11 @@ class SignalProcessor:
         # Calibration state
         self._calibrating = False
         self._calib_samples: dict[str, list] = {ch: [] for ch in CHANNELS}
+        self._stage_samples: dict[str, dict[str, list[float]]] = {}
+        self._current_stage: str | None = None
         self._baseline_mean: dict[str, dict[str, float]] = {}
         self._baseline_std:  dict[str, dict[str, float]] = {}
+        self.profile_store = CalibrationProfileStore()
 
         # Adjustable thresholds (can be changed by the UI)
         self.beta_threshold = BETA_THRESHOLD
@@ -189,6 +197,8 @@ class SignalProcessor:
             self._buffers[channel].extend(samples.tolist())
             if self._calibrating:
                 self._calib_samples[channel].extend(samples.tolist())
+                if self._current_stage:
+                    self._stage_samples[self._current_stage][channel].extend(samples.tolist())
 
     def reset(self) -> None:
         """Clear all sample buffers."""
@@ -228,36 +238,161 @@ class SignalProcessor:
 
     # ── calibration ────────────────────────────────────────────────────────
 
-    def start_calibration(self) -> None:
-        """Begin recording calibration data (5-10 s recommended)."""
+    def start_calibration(self, stage: str = "baseline_rest") -> None:
+        """Rozpoczyna nagrywanie etapu kalibracji."""
+        if stage not in CALIBRATION_STAGES:
+            raise ValueError(f"Unsupported calibration stage: {stage}")
         with self._lock:
             self._calibrating = True
-            self._calib_samples = {ch: [] for ch in CHANNELS}
-        logger.info("Calibration started")
+            self._current_stage = stage
+            if stage == "baseline_rest":
+                self._calib_samples = {ch: [] for ch in CHANNELS}
+                self._stage_samples = {}
+            self._stage_samples.setdefault(stage, {ch: [] for ch in CHANNELS})
+        logger.info("Calibration stage started: %s", stage)
 
     def stop_calibration(self) -> None:
-        """Finish calibration and compute baselines."""
+        """Kończy bieżący etap kalibracji bez finalizacji profilu."""
         with self._lock:
+            # Zgodność wsteczna: pojedynczy etap baseline ma od razu
+            # aktualizować statystyki normalizacji Z-score.
+            if self._current_stage == "baseline_rest":
+                baseline_metrics = self._compute_stage_metrics(self._calib_samples)
+                self._baseline_mean = {
+                    ch: {
+                        "alpha": baseline_metrics[ch]["alpha_mean"],
+                        "beta": baseline_metrics[ch]["beta_mean"],
+                    }
+                    for ch in CHANNELS
+                }
+                self._baseline_std = {
+                    ch: {
+                        "alpha": baseline_metrics[ch]["alpha_std"],
+                        "beta": baseline_metrics[ch]["beta_std"],
+                    }
+                    for ch in CHANNELS
+                }
             self._calibrating = False
-            for ch in CHANNELS:
-                data = np.array(self._calib_samples[ch], dtype=np.float32)
-                if len(data) < BUFFER_SIZE:
-                    continue
-                # Compute band powers over consecutive 1-second windows
-                alpha_powers, beta_powers = [], []
-                for start in range(0, len(data) - BUFFER_SIZE + 1, BUFFER_SIZE // 2):
-                    window = data[start: start + BUFFER_SIZE]
-                    alpha_powers.append(_band_power(window, ALPHA_LOW, ALPHA_HIGH))
-                    beta_powers.append(_band_power(window, BETA_LOW, BETA_HIGH))
-                self._baseline_mean[ch] = {
-                    "alpha": float(np.mean(alpha_powers)),
-                    "beta":  float(np.mean(beta_powers)),
+            self._current_stage = None
+
+    def _compute_stage_metrics(
+        self, stage_data: dict[str, list[float]]
+    ) -> dict[str, dict[str, float]]:
+        """Liczy metryki pasm dla pojedynczego etapu kalibracji."""
+        metrics: dict[str, dict[str, float]] = {}
+        for ch in CHANNELS:
+            data = np.array(stage_data[ch], dtype=np.float32)
+            alpha_powers: list[float] = []
+            beta_powers: list[float] = []
+            for start in range(0, len(data) - BUFFER_SIZE + 1, BUFFER_SIZE // 2):
+                window = data[start: start + BUFFER_SIZE]
+                alpha_powers.append(_band_power(window, ALPHA_LOW, ALPHA_HIGH))
+                beta_powers.append(_band_power(window, BETA_LOW, BETA_HIGH))
+            metrics[ch] = {
+                "alpha_mean": float(np.mean(alpha_powers)) if alpha_powers else 0.0,
+                "alpha_std": max(float(np.std(alpha_powers)), 1e-6) if alpha_powers else 1e-6,
+                "beta_mean": float(np.mean(beta_powers)) if beta_powers else 0.0,
+                "beta_std": max(float(np.std(beta_powers)), 1e-6) if beta_powers else 1e-6,
+            }
+        return metrics
+
+    def _estimate_stage_quality(self, stage_data: dict[str, list[float]]) -> float:
+        """Szacuje jakość etapu kalibracji na podstawie wariancji sygnału."""
+        scores: list[float] = []
+        for ch in CHANNELS:
+            signal = np.array(stage_data[ch], dtype=np.float32)
+            if len(signal) < BUFFER_SIZE // 2:
+                scores.append(0.0)
+                continue
+            var = float(np.var(signal))
+            if var < 0.5 or var > 10_000:
+                scores.append(0.1)
+            else:
+                scores.append(min(1.0, var / 100.0))
+        return float(np.mean(scores)) if scores else 0.0
+
+    def finalize_calibration_profile(
+        self,
+        profile_id: str,
+        user_id: str,
+        device_address: str,
+        firmware_if_available: str | None = None,
+    ) -> CalibrationProfile:
+        """Finalizuje kalibrację, waliduje sesję i zapisuje profil."""
+        with self._lock:
+            missing = [stage for stage in CALIBRATION_STAGES if stage not in self._stage_samples]
+            if missing:
+                raise ValueError(f"Brak etapów kalibracji: {', '.join(missing)}")
+            for stage in CALIBRATION_STAGES:
+                lengths = [len(self._stage_samples[stage][ch]) for ch in CHANNELS]
+                min_required = int(MIN_CALIBRATION_SECONDS * SAMPLE_RATE)
+                if min(lengths) < min_required:
+                    raise ValueError(
+                        f"Etap '{stage}' ma zbyt mało danych ({min(lengths)} < {min_required})."
+                    )
+                quality = self._estimate_stage_quality(self._stage_samples[stage])
+                if quality < MIN_CALIBRATION_QUALITY:
+                    raise ValueError(
+                        f"Etap '{stage}' ma zbyt niską jakość sygnału ({quality:.2f})."
+                    )
+
+            stage_metrics = {
+                stage: self._compute_stage_metrics(self._stage_samples[stage])
+                for stage in CALIBRATION_STAGES
+            }
+            self._baseline_mean = {
+                ch: {
+                    "alpha": stage_metrics["baseline_rest"][ch]["alpha_mean"],
+                    "beta": stage_metrics["baseline_rest"][ch]["beta_mean"],
                 }
-                self._baseline_std[ch] = {
-                    "alpha": max(float(np.std(alpha_powers)), 1e-6),
-                    "beta":  max(float(np.std(beta_powers)),  1e-6),
+                for ch in CHANNELS
+            }
+            self._baseline_std = {
+                ch: {
+                    "alpha": stage_metrics["baseline_rest"][ch]["alpha_std"],
+                    "beta": stage_metrics["baseline_rest"][ch]["beta_std"],
                 }
-        logger.info("Calibration complete: %s", self._baseline_mean)
+                for ch in CHANNELS
+            }
+
+        focus_beta = (
+            stage_metrics["focus_task"]["AF7"]["beta_mean"] +
+            stage_metrics["focus_task"]["AF8"]["beta_mean"]
+        ) / 2.0
+        relax_alpha = (
+            stage_metrics["relax_task"]["AF7"]["alpha_mean"] +
+            stage_metrics["relax_task"]["AF8"]["alpha_mean"]
+        ) / 2.0
+        initial_thresholds = {
+            "beta_threshold": max(0.1, round(focus_beta * 0.85, 6)),
+            "alpha_threshold": max(0.1, round(relax_alpha * 0.85, 6)),
+            "asym_factor": self.asym_factor,
+        }
+
+        profile = CalibrationProfile(
+            profile_id=profile_id,
+            user_id=user_id,
+            device_address=device_address,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            firmware_if_available=firmware_if_available,
+            baseline_mean=self._baseline_mean,
+            baseline_std=self._baseline_std,
+            stage_metrics=stage_metrics,
+            initial_thresholds=initial_thresholds,
+        )
+        self.profile_store.save(profile)
+        self.apply_calibration_profile(profile)
+        logger.info("Calibration complete and profile saved: %s", profile.profile_id)
+        return profile
+
+    def apply_calibration_profile(self, profile: CalibrationProfile) -> None:
+        """Aplikuje profil kalibracyjny jako aktywny punkt startowy."""
+        with self._lock:
+            self._baseline_mean = profile.baseline_mean
+            self._baseline_std = profile.baseline_std
+        self.beta_threshold = float(profile.initial_thresholds.get("beta_threshold", self.beta_threshold))
+        self.alpha_threshold = float(profile.initial_thresholds.get("alpha_threshold", self.alpha_threshold))
+        self.asym_factor = float(profile.initial_thresholds.get("asym_factor", self.asym_factor))
 
     # ── metrics & direction ────────────────────────────────────────────────
 
