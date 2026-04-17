@@ -21,6 +21,11 @@ class AppSettings:
     debug_logging: bool = False
     debug_eeg_file: bool = False
     debug_logging_enabled: bool = False
+    stream_eeg_enabled: bool = True
+    stream_accelerometer_enabled: bool = True
+    stream_gyroscope_enabled: bool = True
+    stream_ppg_enabled: bool = True
+    stream_battery_enabled: bool = True
 
     def validate(self) -> None:
         """Validate current settings values and raise ``ValueError`` on invalid values."""
@@ -42,6 +47,16 @@ class AppSettings:
             raise ValueError("debug_eeg_file must be a boolean")
         if not isinstance(self.debug_logging_enabled, bool):
             raise ValueError("debug_logging_enabled must be a boolean")
+        if not isinstance(self.stream_eeg_enabled, bool):
+            raise ValueError("stream_eeg_enabled must be a boolean")
+        if not isinstance(self.stream_accelerometer_enabled, bool):
+            raise ValueError("stream_accelerometer_enabled must be a boolean")
+        if not isinstance(self.stream_gyroscope_enabled, bool):
+            raise ValueError("stream_gyroscope_enabled must be a boolean")
+        if not isinstance(self.stream_ppg_enabled, bool):
+            raise ValueError("stream_ppg_enabled must be a boolean")
+        if not isinstance(self.stream_battery_enabled, bool):
+            raise ValueError("stream_battery_enabled must be a boolean")
 
     def to_dict(self) -> dict[str, Any]:
         self.validate()
@@ -62,6 +77,17 @@ class AppSettings:
             "debug_logging_enabled": data.get(
                 "debug_logging_enabled",
                 data.get("debug_eeg_file", defaults.debug_logging_enabled),
+            ),
+            "stream_eeg_enabled": data.get("stream_eeg_enabled", defaults.stream_eeg_enabled),
+            "stream_accelerometer_enabled": data.get(
+                "stream_accelerometer_enabled", defaults.stream_accelerometer_enabled
+            ),
+            "stream_gyroscope_enabled": data.get(
+                "stream_gyroscope_enabled", defaults.stream_gyroscope_enabled
+            ),
+            "stream_ppg_enabled": data.get("stream_ppg_enabled", defaults.stream_ppg_enabled),
+            "stream_battery_enabled": data.get(
+                "stream_battery_enabled", defaults.stream_battery_enabled
             ),
         }
         settings = cls(**merged)

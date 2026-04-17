@@ -355,6 +355,37 @@
                 halign: 'right'
                 text_size: self.size
 
+        BoxLayout:
+            size_hint_y: None
+            height: '40dp'
+            spacing: 10
+            padding: [10, 0, 10, 0]
+            canvas.before:
+                Color:
+                    rgba: (0.08, 0.08, 0.12, 1)
+                RoundedRectangle:
+                    pos: self.pos
+                    size: self.size
+                    radius: [4]
+            Label:
+                text: root.stream_status_text
+                font_size: '9sp'
+                color: (0.72, 0.78, 0.88, 1)
+                halign: 'left'
+                text_size: self.size
+            Label:
+                text: root.motion_text
+                font_size: '9sp'
+                color: (1.0, 0.65, 0.2, 1) if 'artifact' in root.motion_text.lower() else (0.3, 0.9, 0.5, 1)
+                halign: 'center'
+                text_size: self.size
+            Label:
+                text: root.eeg_quality_text
+                font_size: '9sp'
+                color: (0.72, 0.78, 0.88, 1)
+                halign: 'right'
+                text_size: self.size
+
         # Directional Controls
         GridLayout:
             cols: 3

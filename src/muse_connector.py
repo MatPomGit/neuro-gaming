@@ -31,6 +31,7 @@ from typing import Optional
 import numpy as np
 from bleak import BleakClient, BleakScanner
 from bleak.backends.device import BLEDevice
+from src.data_models import DeviceTelemetry, IMUFrame, PPGFrame
 
 logger = logging.getLogger(__name__)
 _EEG_DEBUG_LOGGER_NAME = "neuro_gaming.eeg_debug"
@@ -117,6 +118,13 @@ CMD_STOP = b"\x02\x68\x0a"
 # Sampling rate of the Muse S (Hz)
 SAMPLE_RATE = 256
 BATTERY_LEVEL_UUID = "00002a19-0000-1000-8000-00805f9b34fb"
+GYRO_UUID = "273e0009-4c4d-454d-96be-f03bac821358"
+ACCEL_UUID = "273e000a-4c4d-454d-96be-f03bac821358"
+PPG_UUIDS: dict[str, str] = {
+    "PPG_AMBIENT": "273e000f-4c4d-454d-96be-f03bac821358",
+    "PPG_IR": "273e0010-4c4d-454d-96be-f03bac821358",
+    "PPG_RED": "273e0011-4c4d-454d-96be-f03bac821358",
+}
 # Maksymalny czas (sekundy) oczekiwania na pojawienie się charakterystyk EEG.
 SERVICE_DISCOVERY_TIMEOUT_SECONDS = 30
 STREAM_WATCHDOG_TIMEOUT_SECONDS = 3.0
@@ -332,6 +340,41 @@ def _parse_eeg_packet(data: bytes) -> tuple[int, np.ndarray]:
     return sequence, np.array(samples, dtype=np.float32)
 
 
+def _parse_imu_packet(data: bytes, *, scale: float) -> tuple[int, np.ndarray]:
+    """Dekoduje pakiet IMU do tablicy ``N×3`` (XYZ)."""
+    if len(data) < 8:
+        raise ValueError("IMU packet too short")
+    values = struct.unpack(f">{len(data)//2}h", data[: (len(data) // 2) * 2])
+    sequence = values[0] & 0xFFFF
+    payload = values[1:]
+    usable = (len(payload) // 3) * 3
+    if usable == 0:
+        return sequence, np.zeros((0, 3), dtype=np.float32)
+    arr = np.array(payload[:usable], dtype=np.float32).reshape(-1, 3)
+    return sequence, arr * scale
+
+
+def _parse_ppg_packet(data: bytes) -> tuple[int, np.ndarray]:
+    """Dekoduje pakiet PPG (2B sequence + próbki 24-bit)."""
+    if len(data) < 5:
+        raise ValueError("PPG packet too short")
+    sequence = struct.unpack(">H", data[:2])[0]
+    payload = data[2:]
+    sample_count = len(payload) // 3
+    samples: list[float] = []
+    for i in range(sample_count):
+        chunk = payload[i * 3: (i + 1) * 3]
+        samples.append(float(int.from_bytes(chunk, "big", signed=False)))
+    return sequence, np.array(samples, dtype=np.float32)
+
+
+def _parse_battery_payload(data: bytes) -> int:
+    """Parsuje poziom baterii (0-100%) z charakterystyki BLE."""
+    if not data:
+        raise ValueError("Battery payload is empty")
+    return int(max(0, min(100, data[0])))
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Connector class
 # ──────────────────────────────────────────────────────────────────────────────
@@ -358,10 +401,14 @@ class MuseConnector:
     def __init__(
         self,
         on_eeg: Callable[[str, np.ndarray], None],
+        on_imu: Optional[Callable[[IMUFrame], None]] = None,
+        on_ppg: Optional[Callable[[PPGFrame], None]] = None,
+        on_telemetry: Optional[Callable[[DeviceTelemetry], None]] = None,
         on_status: Optional[Callable[[str], None]] = None,
         known_devices_path: Optional[str] = None,
         debug_logging_enabled: bool = False,
         debug_log_path: Path | str | None = None,
+        stream_config: Optional[dict[str, bool]] = None,
     ) -> None:
         """
         Parameters
@@ -383,6 +430,9 @@ class MuseConnector:
             Optional override for the EEG debug log file location.
         """
         self._on_eeg = on_eeg
+        self._on_imu = on_imu or (lambda _frame: None)
+        self._on_ppg = on_ppg or (lambda _frame: None)
+        self._on_telemetry = on_telemetry or (lambda _telemetry: None)
         self._status_callback = on_status or (lambda _: None)
         self._store = KnownDevicesStore(known_devices_path or _DEFAULT_STORE_PATH)
 
@@ -411,7 +461,26 @@ class MuseConnector:
             "streaming": False,
             "connection_state": self._state.value,
             "reconnect_attempts": 0,
+            "stream_activity": {
+                "eeg": False,
+                "accelerometer": False,
+                "gyroscope": False,
+                "ppg": False,
+                "battery": False,
+            },
+            "motion_artifact": False,
+            "signal_quality": {},
         }
+        self._stream_config = {
+            "eeg": True,
+            "accelerometer": True,
+            "gyroscope": True,
+            "ppg": True,
+            "battery": True,
+        }
+        if stream_config:
+            self._stream_config.update({k: bool(v) for k, v in stream_config.items()})
+        self._active_notifications: set[str] = set()
 
         self.devices: list[BLEDevice] = []
         self._debug_logging_enabled = debug_logging_enabled
@@ -528,6 +597,12 @@ class MuseConnector:
             Callable invoked with a single human-readable status message.
         """
         self._status_callback = callback
+
+    def set_stream_config(self, config: dict[str, bool]) -> None:
+        """Aktualizuje konfigurację aktywnych strumieni bez restartu aplikacji."""
+        self._stream_config.update({k: bool(v) for k, v in config.items()})
+        if self._loop and self._loop.is_running():
+            asyncio.run_coroutine_threadsafe(self._apply_stream_config(), self._loop)
 
     # ── async implementation ───────────────────────────────────────────────
 
@@ -658,23 +733,8 @@ class MuseConnector:
 
             await self._refresh_device_state()
 
-            # Verify and subscribe to EEG notification characteristics
-            subscribed_count = 0
-            for channel, uuid in EEG_UUIDS.items():
-                # Some Windows drivers might need a small gap between subscriptions
-                await asyncio.sleep(0.15)
-                char = self._client.services.get_characteristic(uuid)
-                if char:
-                    try:
-                        await self._client.start_notify(uuid, self._make_eeg_handler(channel))
-                        subscribed_count += 1
-                        logger.debug("Subscribed to %s", channel)
-                    except Exception as e:
-                        logger.warning("Failed to subscribe to %s: %s", channel, e)
-                else:
-                    logger.warning("Characteristic %s (%s) not found!", channel, uuid)
-
-            if subscribed_count == 0:
+            subscribed_count = await self._apply_stream_config()
+            if self._stream_config.get("eeg", True) and subscribed_count == 0:
                 raise RuntimeError("Failed to subscribe to any EEG channels.")
 
             # Send "start streaming" command
@@ -684,7 +744,8 @@ class MuseConnector:
                 self._session_metrics.reset()
             if self._session_metrics.connected_since is None:
                 self._session_metrics.connected_since = time.monotonic()
-            self._battery_task = asyncio.create_task(self._battery_poll_loop())
+            if self._stream_config.get("battery", True):
+                self._battery_task = asyncio.create_task(self._battery_poll_loop())
             self._start_watchdog()
             self._transition_state(
                 ConnectionState.STREAMING,
@@ -758,8 +819,11 @@ class MuseConnector:
             except Exception:
                 pass
             await self._client.disconnect()
+        self._active_notifications.clear()
         self._connected = False
         self._device_state["streaming"] = False
+        for key in self._device_state.get("stream_activity", {}):
+            self._device_state["stream_activity"][key] = False
         if log_session:
             self._log_session_metrics("disconnect")
         if report_state:
@@ -769,14 +833,15 @@ class MuseConnector:
         """Return a BLE notification callback bound to *channel*."""
 
         def handler(sender, data: bytearray) -> None:  # noqa: ANN001
-            # Only process if we are officially in streaming state
-            if not self._device_state.get("streaming"):
+            # Tylko aktywny strumień EEG może aktualizować próbki.
+            if not self._device_state.get("streaming") or not self._stream_config.get("eeg", True):
                 return
 
             try:
                 sequence, samples = _parse_eeg_packet(bytes(data))
                 self._update_session_metrics(channel, sequence, len(samples))
                 self._on_eeg(channel, samples)
+                self._emit_telemetry()
                 
                 if self._debug_logging_enabled:
                     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
@@ -785,6 +850,121 @@ class MuseConnector:
                 logger.warning("EEG parse error on %s: %s", channel, exc)
 
         return handler
+
+    def _make_imu_handler(self, sensor: str, scale: float) -> Callable:
+        """Buduje callback BLE dla pakietów IMU."""
+
+        def handler(sender, data: bytearray) -> None:  # noqa: ANN001
+            if not self._device_state.get("streaming") or not self._stream_config.get(sensor, True):
+                return
+            try:
+                sequence, samples = _parse_imu_packet(bytes(data), scale=scale)
+                self._on_imu(
+                    IMUFrame(
+                        sensor=sensor,
+                        sequence=sequence,
+                        samples=samples,
+                        timestamp=time.time(),
+                    )
+                )
+                self._device_state["stream_activity"][sensor] = True
+                self._emit_telemetry()
+            except Exception as exc:
+                logger.warning("IMU parse error on %s: %s", sensor, exc)
+
+        return handler
+
+    def _make_ppg_handler(self, channel: str) -> Callable:
+        """Buduje callback BLE dla pakietów PPG."""
+
+        def handler(sender, data: bytearray) -> None:  # noqa: ANN001
+            if not self._device_state.get("streaming") or not self._stream_config.get("ppg", True):
+                return
+            try:
+                sequence, samples = _parse_ppg_packet(bytes(data))
+                self._on_ppg(
+                    PPGFrame(
+                        channel=channel,
+                        sequence=sequence,
+                        samples=samples,
+                        timestamp=time.time(),
+                    )
+                )
+                self._device_state["stream_activity"]["ppg"] = True
+                self._emit_telemetry()
+            except Exception as exc:
+                logger.warning("PPG parse error on %s: %s", channel, exc)
+
+        return handler
+
+    async def _apply_stream_config(self) -> int:
+        """Włącza/wyłącza notyfikacje BLE zgodnie z aktualną konfiguracją."""
+        if self._client is None or not self._client.is_connected:
+            return 0
+        eeg_subscribed = 0
+        for channel, uuid in EEG_UUIDS.items():
+            active = self._stream_config.get("eeg", True)
+            eeg_subscribed += await self._toggle_notify(uuid, self._make_eeg_handler(channel), active)
+        await self._toggle_notify(
+            ACCEL_UUID,
+            self._make_imu_handler("accelerometer", scale=0.000061),
+            self._stream_config.get("accelerometer", True),
+        )
+        await self._toggle_notify(
+            GYRO_UUID,
+            self._make_imu_handler("gyroscope", scale=0.0074768),
+            self._stream_config.get("gyroscope", True),
+        )
+        for channel, uuid in PPG_UUIDS.items():
+            await self._toggle_notify(
+                uuid,
+                self._make_ppg_handler(channel),
+                self._stream_config.get("ppg", True),
+            )
+        if not self._stream_config.get("battery", True):
+            if self._battery_task:
+                self._battery_task.cancel()
+                self._battery_task = None
+            self._device_state["battery_level"] = None
+        elif self._battery_task is None and self._connected:
+            self._battery_task = asyncio.create_task(self._battery_poll_loop())
+        self._device_state["stream_activity"]["eeg"] = eeg_subscribed > 0
+        self._device_state["stream_activity"]["accelerometer"] = self._stream_config.get("accelerometer", True)
+        self._device_state["stream_activity"]["gyroscope"] = self._stream_config.get("gyroscope", True)
+        self._device_state["stream_activity"]["ppg"] = self._stream_config.get("ppg", True)
+        self._device_state["stream_activity"]["battery"] = self._stream_config.get("battery", True)
+        self._emit_telemetry()
+        return eeg_subscribed
+
+    async def _toggle_notify(self, uuid: str, handler: Callable, should_enable: bool) -> int:
+        """Pomocniczo start/stop notyfikacji dla pojedynczej charakterystyki."""
+        if self._client is None:
+            return 0
+        char = self._client.services.get_characteristic(uuid)
+        if not char:
+            return 0
+        try:
+            if should_enable and uuid not in self._active_notifications:
+                await self._client.start_notify(uuid, handler)
+                self._active_notifications.add(uuid)
+                return 1
+            if not should_enable and uuid in self._active_notifications:
+                await self._client.stop_notify(uuid)
+                self._active_notifications.discard(uuid)
+        except Exception as exc:
+            logger.warning("Failed to toggle notify %s: %s", uuid, exc)
+        return 0
+
+    def _emit_telemetry(self) -> None:
+        """Publikuje ujednoliconą telemetrię urządzenia do warstw wyżej."""
+        telemetry = DeviceTelemetry(
+            battery_level=self._device_state.get("battery_level"),
+            stream_activity=dict(self._device_state.get("stream_activity", {})),
+            signal_quality=dict(self._device_state.get("signal_quality", {})),
+            motion_artifact=bool(self._device_state.get("motion_artifact", False)),
+            timestamp=time.time(),
+        )
+        self._on_telemetry(telemetry)
 
     async def _refresh_device_state(self) -> None:
         """Collect additional metadata (battery + available sensors)."""
@@ -812,6 +992,14 @@ class MuseConnector:
         ]
         self._device_state["available_sensors"] = sensors
         self._device_state["battery_level"] = await self._read_battery_level()
+        self._device_state["stream_activity"].update({
+            "eeg": self._stream_config.get("eeg", True) and "EEG" in sensors,
+            "accelerometer": self._stream_config.get("accelerometer", True) and "Accelerometer" in sensors,
+            "gyroscope": self._stream_config.get("gyroscope", True) and "Gyroscope" in sensors,
+            "ppg": self._stream_config.get("ppg", True) and "PPG" in sensors,
+            "battery": self._stream_config.get("battery", True),
+        })
+        self._emit_telemetry()
 
     async def _read_battery_level(self) -> Optional[int]:
         if self._client is None or not self._client.is_connected:
@@ -824,14 +1012,18 @@ class MuseConnector:
             data = await self._client.read_gatt_char(char)
             if not data:
                 return None
-            return int(data[0])
+            level = _parse_battery_payload(data)
+            self._device_state["stream_activity"]["battery"] = True
+            self._emit_telemetry()
+            return level
         except Exception as exc:
             logger.debug("Battery level unavailable: %s", exc)
             return None
 
     async def _battery_poll_loop(self) -> None:
         while self._client and self._client.is_connected:
-            self._device_state["battery_level"] = await self._read_battery_level()
+            if self._stream_config.get("battery", True):
+                self._device_state["battery_level"] = await self._read_battery_level()
             await asyncio.sleep(20)
 
     def _start_watchdog(self) -> None:
