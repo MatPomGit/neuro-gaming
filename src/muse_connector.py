@@ -114,6 +114,8 @@ CMD_STOP = b"\x02\x68\x0a"
 # Sampling rate of the Muse S (Hz)
 SAMPLE_RATE = 256
 BATTERY_LEVEL_UUID = "00002a19-0000-1000-8000-00805f9b34fb"
+# Maksymalny czas (sekundy) oczekiwania na pojawienie się charakterystyk EEG.
+SERVICE_DISCOVERY_TIMEOUT_SECONDS = 30
 
 # Known Muse data characteristics (used for capability reporting in UI)
 SENSOR_CHARACTERISTICS: dict[str, set[str]] = {
@@ -383,8 +385,8 @@ class MuseConnector:
         future = asyncio.run_coroutine_threadsafe(
             self._async_connect(device), self._loop
         )
-        # Increased timeout for Windows service discovery and retries
-        future.result(timeout=30)
+        # Utrzymujemy spójny timeout całego połączenia z timeoutem discovery.
+        future.result(timeout=SERVICE_DISCOVERY_TIMEOUT_SECONDS + 10)
 
     def disconnect(self) -> None:
         """Stop EEG streaming and disconnect from the device."""
@@ -516,24 +518,28 @@ class MuseConnector:
                     logger.debug("Pairing info: %s", e)
 
             # --- Aggressive Service Discovery ---
-            # Muse devices on Windows often update services AFTER connection.
-            # We wait and retry until the EEG characteristics appear.
-            
+            # Na Windows usługi BLE potrafią pojawić się z opóźnieniem po połączeniu.
+            # Dlatego odświeżamy listę usług przez maksymalnie 30 sekund.
             services_stabilized = False
-            for attempt in range(1, 11):  # Up to 10 attempts (10 seconds)
-                logger.info("Service discovery attempt %d/10...", attempt)
-                
-                # Accessing .services triggers discovery in Bleak
-                current_services = self._client.services
-                all_chars = [ch.uuid.lower() for s in current_services for ch in s.characteristics]
-                
-                # Check if we have at least one EEG characteristic (TP9)
+            discovery_attempts = SERVICE_DISCOVERY_TIMEOUT_SECONDS
+            all_chars: list[str] = []
+            for attempt in range(1, discovery_attempts + 1):
+                logger.info("Service discovery attempt %d/%d...", attempt, discovery_attempts)
+
+                # Wymuszamy odświeżenie usług, bo sama właściwość .services
+                # może zwracać niepełny cache zaraz po zestawieniu połączenia.
+                all_chars = await self._collect_characteristic_uuids()
+
+                # Sprawdzamy obecność kanału TP9 jako sygnał gotowości EEG.
                 if any(uuid.startswith("273e0003") for uuid in all_chars):
                     logger.info("EEG characteristics discovered after %d attempts!", attempt)
                     services_stabilized = True
                     break
-                
-                logger.warning("EEG characteristics not found yet. Discovered so far: %d. Waiting...", len(all_chars))
+
+                logger.warning(
+                    "EEG characteristics not found yet. Discovered so far: %d. Waiting...",
+                    len(all_chars),
+                )
                 await asyncio.sleep(1.0)
 
             if not services_stabilized:
@@ -576,6 +582,23 @@ class MuseConnector:
             if self._client:
                 await self._client.disconnect()
             raise
+
+    async def _collect_characteristic_uuids(self) -> list[str]:
+        """Zwraca listę UUID charakterystyk po wymuszonym odświeżeniu usług GATT."""
+        if self._client is None:
+            return []
+
+        try:
+            # Preferujemy jawne pobranie usług, aby uniknąć nieaktualnego cache.
+            services = await self._client.get_services()
+        except Exception as exc:
+            logger.debug("Service refresh failed, using cached services: %s", exc)
+            services = self._client.services
+
+        if not services:
+            return []
+
+        return [ch.uuid.lower() for service in services for ch in service.characteristics]
 
     async def _async_auto_connect(self, timeout: float) -> bool:
         """Scan and connect to the first known device found."""
