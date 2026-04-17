@@ -26,6 +26,8 @@ class AppSettings:
     stream_gyroscope_enabled: bool = True
     stream_ppg_enabled: bool = True
     stream_battery_enabled: bool = True
+    active_profile_id: str = "default"
+    default_profile_id: str = "default"
 
     def validate(self) -> None:
         """Validate current settings values and raise ``ValueError`` on invalid values."""
@@ -57,6 +59,10 @@ class AppSettings:
             raise ValueError("stream_ppg_enabled must be a boolean")
         if not isinstance(self.stream_battery_enabled, bool):
             raise ValueError("stream_battery_enabled must be a boolean")
+        if not isinstance(self.active_profile_id, str) or not self.active_profile_id.strip():
+            raise ValueError("active_profile_id must be a non-empty string")
+        if not isinstance(self.default_profile_id, str) or not self.default_profile_id.strip():
+            raise ValueError("default_profile_id must be a non-empty string")
 
     def to_dict(self) -> dict[str, Any]:
         self.validate()
@@ -89,6 +95,8 @@ class AppSettings:
             "stream_battery_enabled": data.get(
                 "stream_battery_enabled", defaults.stream_battery_enabled
             ),
+            "active_profile_id": data.get("active_profile_id", defaults.active_profile_id),
+            "default_profile_id": data.get("default_profile_id", defaults.default_profile_id),
         }
         settings = cls(**merged)
         settings.validate()

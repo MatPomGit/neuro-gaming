@@ -27,6 +27,7 @@ import math
 import os
 import struct
 import tempfile
+import time
 import threading
 import wave
 
@@ -445,6 +446,8 @@ class GameScreen(Screen):
         alpha_input = TextInput(text=str(settings.alpha_threshold), multiline=False)
         asym_input = TextInput(text=str(settings.asym_factor), multiline=False)
         hyst_input = TextInput(text=str(settings.hysteresis_count), multiline=False)
+        active_profile_input = TextInput(text=settings.active_profile_id, multiline=False)
+        default_profile_input = TextInput(text=settings.default_profile_id, multiline=False)
         forwarding_switch = Switch(active=settings.forwarding_enabled)
         eeg_switch = Switch(active=settings.stream_eeg_enabled)
         accel_switch = Switch(active=settings.stream_accelerometer_enabled)
@@ -457,6 +460,8 @@ class GameScreen(Screen):
             ("Alpha threshold", alpha_input),
             ("Asymmetry factor", asym_input),
             ("Hysteresis count", hyst_input),
+            ("Active profile ID", active_profile_input),
+            ("Default profile ID", default_profile_input),
         ):
             row = BoxLayout(size_hint_y=None, height="38dp")
             row.add_widget(Label(text=label_text, size_hint_x=0.55))
@@ -499,6 +504,8 @@ class GameScreen(Screen):
                 gyro_switch.active,
                 ppg_switch.active,
                 battery_switch.active,
+                active_profile_input.text,
+                default_profile_input.text,
             )
         )
         reset_btn.bind(on_release=lambda *_: self._restore_defaults_from_popup(popup))
@@ -524,6 +531,8 @@ class GameScreen(Screen):
         stream_gyroscope_enabled: bool,
         stream_ppg_enabled: bool,
         stream_battery_enabled: bool,
+        active_profile_id: str,
+        default_profile_id: str,
     ) -> None:
         app = App.get_running_app()
         try:
@@ -542,6 +551,8 @@ class GameScreen(Screen):
                 stream_gyroscope_enabled=bool(stream_gyroscope_enabled),
                 stream_ppg_enabled=bool(stream_ppg_enabled),
                 stream_battery_enabled=bool(stream_battery_enabled),
+                active_profile_id=active_profile_id.strip() or "default",
+                default_profile_id=default_profile_id.strip() or "default",
             )
             candidate.validate()
         except (TypeError, ValueError) as exc:
@@ -719,15 +730,15 @@ class TestScreen(Screen):
 # ──────────────────────────────────────────────────────────────────────────────
 
 # Total recording time for a single calibration run (seconds)
-CALIBRATION_DURATION = 10
+CALIBRATION_STAGE_DURATION = 8
 
 # Step descriptions shown in the calibration wizard
 _CALIB_STEPS = [
-    "1. Put on the Muse headband and ensure all sensors have direct skin contact.",
-    "2. Verify sensor contact quality — all quality bars should be solid green.",
-    "3. Sit still, relax, and look straight ahead with eyes open.",
-    "4. Press START CALIBRATION and remain still for 10 seconds.",
-    "5. When the timer reaches zero the baseline is saved automatically.",
+    "1. Etap bazowy: usiądź spokojnie i patrz przed siebie.",
+    "2. Etap koncentracji: skup się na prostym zadaniu mentalnym.",
+    "3. Etap relaksacji: rozluźnij oddech i mięśnie twarzy.",
+    "4. Walidacja: sprawdzamy długość i jakość sygnału.",
+    "5. Zapis profilu: aktywujemy nowy profil kalibracji.",
 ]
 
 
@@ -746,10 +757,10 @@ class CalibrationScreen(Screen):
     calibration_done = BooleanProperty(False)
 
     # Countdown timer value (seconds remaining)
-    timer_value = NumericProperty(CALIBRATION_DURATION)
+    timer_value = NumericProperty(CALIBRATION_STAGE_DURATION)
 
     # Human-readable status displayed below the step list
-    status_text = StringProperty("Follow the steps above, then press START CALIBRATION.")
+    status_text = StringProperty("Naciśnij START, aby rozpocząć kalibrację etapową.")
 
     # Signal quality per channel (0–1)
     quality_tp9  = NumericProperty(0.0)
@@ -761,7 +772,8 @@ class CalibrationScreen(Screen):
     steps = ListProperty(_CALIB_STEPS)
 
     # Expose duration so the KV timer bar can reference it without a magic number
-    calibration_duration = NumericProperty(CALIBRATION_DURATION)
+    calibration_duration = NumericProperty(CALIBRATION_STAGE_DURATION)
+    stage_name = StringProperty("Etap bazowy")
 
     _tick_event = None
     _elapsed = 0.0
@@ -797,22 +809,16 @@ class CalibrationScreen(Screen):
         # Countdown while calibrating
         if self.is_calibrating:
             self._elapsed += dt
-            remaining = max(0.0, CALIBRATION_DURATION - self._elapsed)
+            remaining = max(0.0, CALIBRATION_STAGE_DURATION - self._elapsed)
             self.timer_value = remaining
-            self.status_text = f"Calibrating… {int(remaining) + 1}s remaining — stay still."
+            self.status_text = f"{self.stage_name}: pozostało {int(remaining) + 1}s."
             if remaining <= 0:
-                self._finish_calibration()
+                self._advance_or_finish()
 
     def _auto_advance_step(self) -> None:
         """Advance the highlighted step automatically as conditions are met."""
-        avg_quality = (
-            self.quality_tp9 + self.quality_af7 +
-            self.quality_af8 + self.quality_tp10
-        ) / 4.0
-        if avg_quality >= 0.5 and self.current_step < 2:
-            self.current_step = 2
-        elif avg_quality < 0.5 and self.current_step >= 2:
-            self.current_step = 1
+        if self.current_step < 0:
+            self.current_step = 0
 
     # ── button handlers ────────────────────────────────────────────────────
 
@@ -822,22 +828,64 @@ class CalibrationScreen(Screen):
         self.is_calibrating = True
         self.calibration_done = False
         self._elapsed = 0.0
-        self.timer_value = CALIBRATION_DURATION
-        self.current_step = 3
-        self.status_text = f"Calibrating… {CALIBRATION_DURATION}s remaining — stay still."
-        app.processor.start_calibration()
+        self.current_step = 0
+        self.stage_name = "Etap bazowy (spoczynek)"
+        self.timer_value = CALIBRATION_STAGE_DURATION
+        self.status_text = "Rozpoczęto etap bazowy."
+        app.processor.start_calibration("baseline_rest")
         logger.info("Calibration wizard: started")
 
+    def _advance_or_finish(self) -> None:
+        """Przechodzi do kolejnego etapu albo finalizuje profil."""
+        app = App.get_running_app()
+        if self.current_step == 0:
+            app.processor.stop_calibration()
+            self.current_step = 1
+            self._elapsed = 0.0
+            self.timer_value = CALIBRATION_STAGE_DURATION
+            self.stage_name = "Etap koncentracji"
+            self.status_text = "Etap koncentracji rozpoczęty."
+            app.processor.start_calibration("focus_task")
+            return
+        if self.current_step == 1:
+            app.processor.stop_calibration()
+            self.current_step = 2
+            self._elapsed = 0.0
+            self.timer_value = CALIBRATION_STAGE_DURATION
+            self.stage_name = "Etap relaksacji"
+            self.status_text = "Etap relaksacji rozpoczęty."
+            app.processor.start_calibration("relax_task")
+            return
+        self._finish_calibration()
+
     def _finish_calibration(self) -> None:
-        """Stop recording and compute the baseline."""
+        """Kończy kalibrację i zapisuje profil użytkownika."""
         app = App.get_running_app()
         app.processor.stop_calibration()
         self.is_calibrating = False
-        self.calibration_done = True
-        self.current_step = 4
         self.timer_value = 0.0
-        self.status_text = "Calibration complete — baseline saved.  You may return to the game."
-        logger.info("Calibration wizard: finished")
+        state = app.connector.device_state
+        device_address = state.get("address") or "keyboard-mode"
+        firmware = state.get("firmware_version")
+        profile_id = f"{device_address.replace(':', '').lower()}_{int(time.time())}"
+        try:
+            profile = app.processor.finalize_calibration_profile(
+                profile_id=profile_id,
+                user_id="default-user",
+                device_address=device_address,
+                firmware_if_available=firmware,
+            )
+            app.settings.active_profile_id = profile.profile_id
+            app.persist_settings()
+            self.calibration_done = True
+            self.current_step = 4
+            self.status_text = "Kalibracja zakończona pomyślnie. Profil został zapisany."
+            logger.info("Calibration wizard: finished with profile %s", profile.profile_id)
+        except ValueError as exc:
+            self.calibration_done = False
+            self.current_step = 3
+            self.status_text = f"Kalibracja odrzucona: {exc}"
+            logger.warning("Calibration rejected: %s", exc)
 
     def go_back(self) -> None:
         """Return to the previous screen."""
@@ -925,7 +973,15 @@ class NeuroGamingApp(App):
         self.stop()
 
     def apply_settings(self) -> None:
+        loaded_profile = None
+        if self.processor.profile_store.exists(self.settings.active_profile_id):
+            loaded_profile = self.processor.profile_store.load(self.settings.active_profile_id)
+        elif self.processor.profile_store.exists(self.settings.default_profile_id):
+            loaded_profile = self.processor.profile_store.load(self.settings.default_profile_id)
+            self.settings.active_profile_id = self.settings.default_profile_id
         self.processor.apply_settings(self.settings)
+        if loaded_profile:
+            self.processor.apply_calibration_profile(loaded_profile)
         self.controller.apply_settings(self.settings)
         self.connector.set_stream_config({
             "eeg": self.settings.stream_eeg_enabled,
