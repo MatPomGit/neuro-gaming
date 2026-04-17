@@ -306,6 +306,9 @@ class GameScreen(Screen):
     battery_text = StringProperty("Battery: --")
     sensors_text = StringProperty("Sensors: --")
     device_text = StringProperty("Device: keyboard mode")
+    stream_status_text = StringProperty("Streams: --")
+    motion_text = StringProperty("Motion: stable")
+    eeg_quality_text = StringProperty("EEG quality: --")
 
     _update_event = None
 
@@ -346,6 +349,8 @@ class GameScreen(Screen):
             self.quality_af7  = sq.get("AF7",  0.0)
             self.quality_af8  = sq.get("AF8",  0.0)
             self.quality_tp10 = sq.get("TP10", 0.0)
+            app.connector._device_state["signal_quality"] = dict(sq)
+            app.connector._device_state["motion_artifact"] = app.processor.is_motion_artifact_active()
 
         self.direction = app.controller.current_direction
         tag = "[EEG]" if app.connector.is_connected else "[KB]"
@@ -368,6 +373,9 @@ class GameScreen(Screen):
             self.device_text = "Device: keyboard mode"
             self.battery_text = "Battery: --"
             self.sensors_text = "Sensors: --"
+            self.stream_status_text = "Streams: --"
+            self.motion_text = "Motion: --"
+            self.eeg_quality_text = "EEG quality: --"
             return
         state = app.connector.device_state
         battery = state.get("battery_level")
@@ -382,6 +390,20 @@ class GameScreen(Screen):
         )
         self.battery_text = f"Battery: {battery_value}"
         self.sensors_text = f"Sensors: {sensor_summary}"
+        stream_activity = state.get("stream_activity", {})
+        stream_bits = [
+            f"{name}:{'ON' if active else 'OFF'}"
+            for name, active in stream_activity.items()
+        ]
+        self.stream_status_text = "Streams: " + (", ".join(stream_bits) if stream_bits else "--")
+        motion = bool(state.get("motion_artifact", False))
+        self.motion_text = "Motion: artifact risk" if motion else "Motion: stable"
+        quality = state.get("signal_quality", {})
+        if quality:
+            avg_quality = sum(float(v) for v in quality.values()) / max(1, len(quality))
+            self.eeg_quality_text = f"EEG quality: {int(avg_quality * 100)}%"
+        else:
+            self.eeg_quality_text = "EEG quality: --"
 
     # ── direction callback ─────────────────────────────────────────────────
 
@@ -424,6 +446,11 @@ class GameScreen(Screen):
         asym_input = TextInput(text=str(settings.asym_factor), multiline=False)
         hyst_input = TextInput(text=str(settings.hysteresis_count), multiline=False)
         forwarding_switch = Switch(active=settings.forwarding_enabled)
+        eeg_switch = Switch(active=settings.stream_eeg_enabled)
+        accel_switch = Switch(active=settings.stream_accelerometer_enabled)
+        gyro_switch = Switch(active=settings.stream_gyroscope_enabled)
+        ppg_switch = Switch(active=settings.stream_ppg_enabled)
+        battery_switch = Switch(active=settings.stream_battery_enabled)
 
         for label_text, widget in (
             ("Beta threshold", beta_input),
@@ -440,6 +467,17 @@ class GameScreen(Screen):
         switch_row.add_widget(Label(text="OS forwarding", size_hint_x=0.55))
         switch_row.add_widget(forwarding_switch)
         form.add_widget(switch_row)
+        for row_label, row_switch in (
+            ("Stream EEG", eeg_switch),
+            ("Stream accelerometer", accel_switch),
+            ("Stream gyroscope", gyro_switch),
+            ("Stream PPG", ppg_switch),
+            ("Stream battery", battery_switch),
+        ):
+            row = BoxLayout(size_hint_y=None, height="38dp")
+            row.add_widget(Label(text=row_label, size_hint_x=0.55))
+            row.add_widget(row_switch)
+            form.add_widget(row)
 
         actions = BoxLayout(size_hint_y=None, height="44dp", spacing=8)
         popup = Popup(title="Settings", content=root, size_hint=(0.8, 0.75))
@@ -456,6 +494,11 @@ class GameScreen(Screen):
                 asym_input.text,
                 hyst_input.text,
                 forwarding_switch.active,
+                eeg_switch.active,
+                accel_switch.active,
+                gyro_switch.active,
+                ppg_switch.active,
+                battery_switch.active,
             )
         )
         reset_btn.bind(on_release=lambda *_: self._restore_defaults_from_popup(popup))
@@ -476,6 +519,11 @@ class GameScreen(Screen):
         asym: str,
         hysteresis: str,
         forwarding_enabled: bool,
+        stream_eeg_enabled: bool,
+        stream_accelerometer_enabled: bool,
+        stream_gyroscope_enabled: bool,
+        stream_ppg_enabled: bool,
+        stream_battery_enabled: bool,
     ) -> None:
         app = App.get_running_app()
         try:
@@ -489,6 +537,11 @@ class GameScreen(Screen):
                 debug_logging=app.settings.debug_logging,
                 debug_eeg_file=app.settings.debug_eeg_file,
                 debug_logging_enabled=app.settings.debug_logging_enabled,
+                stream_eeg_enabled=bool(stream_eeg_enabled),
+                stream_accelerometer_enabled=bool(stream_accelerometer_enabled),
+                stream_gyroscope_enabled=bool(stream_gyroscope_enabled),
+                stream_ppg_enabled=bool(stream_ppg_enabled),
+                stream_battery_enabled=bool(stream_battery_enabled),
             )
             candidate.validate()
         except (TypeError, ValueError) as exc:
@@ -824,8 +877,16 @@ class NeuroGamingApp(App):
         self.processor = SignalProcessor(settings=self.settings)
         self.connector = MuseConnector(
             on_eeg=self.processor.add_samples,
+            on_imu=lambda frame: self.processor.add_imu_frame(frame.sensor, frame.samples),
             on_status=lambda msg: logger.info("[Muse] %s", msg),
             debug_logging_enabled=self.settings.debug_logging_enabled,
+            stream_config={
+                "eeg": self.settings.stream_eeg_enabled,
+                "accelerometer": self.settings.stream_accelerometer_enabled,
+                "gyroscope": self.settings.stream_gyroscope_enabled,
+                "ppg": self.settings.stream_ppg_enabled,
+                "battery": self.settings.stream_battery_enabled,
+            },
         )
         self.controller = GameController(settings=self.settings)
         self.apply_settings()
@@ -866,6 +927,13 @@ class NeuroGamingApp(App):
     def apply_settings(self) -> None:
         self.processor.apply_settings(self.settings)
         self.controller.apply_settings(self.settings)
+        self.connector.set_stream_config({
+            "eeg": self.settings.stream_eeg_enabled,
+            "accelerometer": self.settings.stream_accelerometer_enabled,
+            "gyroscope": self.settings.stream_gyroscope_enabled,
+            "ppg": self.settings.stream_ppg_enabled,
+            "battery": self.settings.stream_battery_enabled,
+        })
 
     def persist_settings(self) -> None:
         try:

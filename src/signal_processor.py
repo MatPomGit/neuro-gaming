@@ -30,6 +30,7 @@ Control mapping
 """
 
 import logging
+import time
 from collections import deque
 from typing import Optional
 
@@ -60,6 +61,9 @@ MIN_CONFIDENCE = 0.35
 # Artefact rejection
 MAX_SAMPLE_AMPLITUDE = 300.0   # µV, gross movement/blink artefact
 POWER_SPIKE_FACTOR = 4.0       # sudden power jump/drop between windows
+MOTION_ARTEFACT_LATCH_SECONDS = 0.8
+MOTION_ARTEFACT_ACCEL_THRESHOLD = 2.4
+MOTION_ARTEFACT_GYRO_THRESHOLD = 130.0
 
 # Adaptive baselines
 EMA_ALPHA = 0.2
@@ -156,6 +160,8 @@ class SignalProcessor:
         self._last_total_power: dict[str, float | None] = {ch: None for ch in CHANNELS}
         self._artifact_channels: dict[str, bool] = {ch: False for ch in CHANNELS}
         self._last_confidence = 0.0
+        # Znacznik artefaktu ruchowego (IMU) blokujący decyzje EEG przez krótki czas.
+        self._motion_artifact_until = 0.0
         if settings is not None:
             self.apply_settings(settings)
 
@@ -192,6 +198,33 @@ class SignalProcessor:
             self._last_total_power = {ch: None for ch in CHANNELS}
             self._artifact_channels = {ch: False for ch in CHANNELS}
             self._last_confidence = 0.0
+            self._motion_artifact_until = 0.0
+
+    def add_imu_frame(self, sensor: str, samples: np.ndarray) -> None:
+        """Analizuje ramkę IMU i oznacza potencjalny artefakt ruchowy.
+
+        Parametry
+        ---------
+        sensor:
+            Nazwa sensora: ``\"accelerometer\"`` lub ``\"gyroscope\"``.
+        samples:
+            Tablica ``N×3`` z osiami XYZ.
+        """
+        if samples.size == 0:
+            return
+        norms = np.linalg.norm(samples, axis=1)
+        threshold = (
+            MOTION_ARTEFACT_ACCEL_THRESHOLD
+            if sensor == "accelerometer"
+            else MOTION_ARTEFACT_GYRO_THRESHOLD
+        )
+        if float(np.max(norms)) < threshold:
+            return
+        with self._lock:
+            self._motion_artifact_until = max(
+                self._motion_artifact_until,
+                time.monotonic() + MOTION_ARTEFACT_LATCH_SECONDS,
+            )
 
     # ── calibration ────────────────────────────────────────────────────────
 
@@ -290,6 +323,9 @@ class SignalProcessor:
         Returns one of the ``DIRECTION_*`` constants defined in this module.
         """
         m = self.get_metrics()
+        if self.is_motion_artifact_active():
+            self._last_confidence = 0.0
+            return DIRECTION_NONE
 
         # Average beta and alpha across forehead channels (most informative)
         beta_avg  = (m["AF7"]["beta"]  + m["AF8"]["beta"])  / 2
@@ -330,6 +366,11 @@ class SignalProcessor:
         if direction == DIRECTION_NONE or self._last_confidence < self.min_confidence:
             return DIRECTION_NONE
         return direction
+
+    def is_motion_artifact_active(self) -> bool:
+        """Zwraca ``True``, gdy ostatni ruch głowy może zafałszować EEG."""
+        with self._lock:
+            return time.monotonic() < self._motion_artifact_until
 
     def get_signal_quality(self) -> dict[str, float]:
         """Return a 0–1 signal-quality score for each channel.
