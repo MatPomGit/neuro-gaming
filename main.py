@@ -244,6 +244,14 @@ class ScanScreen(Screen):
         """Open the interactive test screen."""
         App.get_running_app().root.current = "test"
 
+    def go_to_focus_module(self) -> None:
+        """Otwiera moduł treningu koncentracji."""
+        App.get_running_app().root.current = "focus_module"
+
+    def go_to_breath_module(self) -> None:
+        """Otwiera moduł ćwiczeń oddechowych."""
+        App.get_running_app().root.current = "breath_module"
+
     def open_user_guide(self) -> None:
         App.get_running_app().open_user_guide()
 
@@ -745,6 +753,10 @@ class GameScreen(Screen):
     def open_user_guide(self) -> None:
         App.get_running_app().open_user_guide()
 
+    def go_to_main_menu(self) -> None:
+        """Wraca do menu głównego aplikacji bez zamykania programu."""
+        App.get_running_app().root.current = "scan"
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Screen: Test
@@ -995,6 +1007,11 @@ class TestScreen(Screen):
     # ── navigation ─────────────────────────────────────────────────────────
 
     def go_back(self) -> None:
+        """Pozostawiona kompatybilność: deleguje do wspólnej nawigacji."""
+        self.go_to_main_menu()
+
+    def go_to_main_menu(self) -> None:
+        """Wraca z modułu diagnostycznego do menu głównego."""
         App.get_running_app().root.current = "scan"
 
 
@@ -1161,8 +1178,103 @@ class CalibrationScreen(Screen):
             logger.warning("Calibration rejected: %s", exc)
 
     def go_back(self) -> None:
-        """Return to the previous screen."""
-        App.get_running_app().root.current = "game"
+        """Pozostawiona kompatybilność: deleguje do wspólnej nawigacji."""
+        self.go_to_main_menu()
+
+    def go_to_main_menu(self) -> None:
+        """Wraca z kreatora kalibracji do menu głównego."""
+        App.get_running_app().root.current = "scan"
+
+
+class FocusModuleScreen(Screen):
+    """Moduł treningu koncentracji oparty o krótkie serie czasowe."""
+
+    status_text = StringProperty("Moduł gotowy. Wciśnij START, aby uruchomić serię.")
+    is_running = BooleanProperty(False)
+    elapsed_seconds = NumericProperty(0.0)
+    _tick_event = None
+
+    def start_session(self) -> None:
+        """Uruchamia prostą sesję czasową w module koncentracji."""
+        if self.is_running:
+            return
+        self.is_running = True
+        self.elapsed_seconds = 0.0
+        self.status_text = "Sesja koncentracji trwa… utrzymaj stabilny oddech."
+        self._tick_event = Clock.schedule_interval(self._tick, 1.0)
+
+    def stop_session(self) -> None:
+        """Zatrzymuje aktywną sesję i prezentuje podsumowanie czasu."""
+        if self._tick_event:
+            self._tick_event.cancel()
+            self._tick_event = None
+        self.is_running = False
+        self.status_text = f"Zakończono sesję. Czas pracy: {int(self.elapsed_seconds)} s."
+
+    def _tick(self, dt: float) -> None:
+        """Aktualizuje licznik czasu podczas aktywnej sesji."""
+        self.elapsed_seconds += dt
+
+    def go_to_main_menu(self) -> None:
+        """Wraca do menu głównego i zatrzymuje ewentualną sesję."""
+        self.stop_session()
+        App.get_running_app().root.current = "scan"
+
+
+class BreathModuleScreen(Screen):
+    """Moduł ćwiczeń oddechowych wspierających relaks przed sesją EEG."""
+
+    phase_text = StringProperty("Faza: WDECH")
+    instruction_text = StringProperty("Rozpocznij ćwiczenie, aby aktywować przewodnik oddechu.")
+    is_running = BooleanProperty(False)
+    _tick_event = None
+    _phase_index = 0
+    _phase_elapsed = 0.0
+    _phases = [
+        ("WDECH", 4.0),
+        ("WSTRZYMAJ", 2.0),
+        ("WYDECH", 6.0),
+    ]
+
+    def start_breathing(self) -> None:
+        """Uruchamia cykliczny przewodnik oddechowy."""
+        if self.is_running:
+            return
+        self.is_running = True
+        self._phase_index = 0
+        self._phase_elapsed = 0.0
+        self._apply_phase_text()
+        self._tick_event = Clock.schedule_interval(self._tick, 0.2)
+
+    def stop_breathing(self) -> None:
+        """Zatrzymuje ćwiczenie i czyści status modułu oddechowego."""
+        if self._tick_event:
+            self._tick_event.cancel()
+            self._tick_event = None
+        self.is_running = False
+        self.phase_text = "Faza: WDECH"
+        self.instruction_text = "Ćwiczenie zatrzymane. Możesz uruchomić je ponownie."
+
+    def _tick(self, dt: float) -> None:
+        """Przełącza fazy oddechu po upływie skonfigurowanego czasu."""
+        self._phase_elapsed += dt
+        _, duration = self._phases[self._phase_index]
+        if self._phase_elapsed < duration:
+            return
+        self._phase_elapsed = 0.0
+        self._phase_index = (self._phase_index + 1) % len(self._phases)
+        self._apply_phase_text()
+
+    def _apply_phase_text(self) -> None:
+        """Aktualizuje etykiety GUI zgodnie z aktywną fazą oddechową."""
+        phase_name, phase_duration = self._phases[self._phase_index]
+        self.phase_text = f"Faza: {phase_name}"
+        self.instruction_text = f"{phase_name} przez {int(phase_duration)} sekund."
+
+    def go_to_main_menu(self) -> None:
+        """Wraca do menu głównego i zatrzymuje ćwiczenie oddechowe."""
+        self.stop_breathing()
+        App.get_running_app().root.current = "scan"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1277,6 +1389,8 @@ class NeuroGamingApp(App):
         sm.add_widget(GameScreen(name="game"))
         sm.add_widget(CalibrationScreen(name="calibration"))
         sm.add_widget(TestScreen(name="test"))
+        sm.add_widget(FocusModuleScreen(name="focus_module"))
+        sm.add_widget(BreathModuleScreen(name="breath_module"))
         return sm
 
     def _remember_raw_signal(self, sensor: str, value: str) -> None:
