@@ -318,6 +318,8 @@ class GameScreen(Screen):
     eeg_quality_text = StringProperty("EEG quality: --")
     session_health_text = StringProperty("Session health: --")
     session_health_suggestion = StringProperty("Suggestion: --")
+    active_panel = StringProperty("control")
+    raw_signals_text = StringProperty("Oczekiwanie na sygnały z sensorów…")
 
     _update_event = None
     _was_connected = False
@@ -407,6 +409,23 @@ class GameScreen(Screen):
         label = _DIR_LABELS.get(self.direction, self.direction)
         self.status_text = f"{tag}  {label}"
         self._update_device_status(app)
+        self._update_raw_signals(app)
+
+    def set_active_panel(self, panel_name: str) -> None:
+        """Przełącza aktywną zakładkę panelu głównego na ekranie gry."""
+        if panel_name in {"control", "raw"}:
+            self.active_panel = panel_name
+
+    def _update_raw_signals(self, app) -> None:  # noqa: ANN001
+        """Buduje tekstowy podgląd najnowszych surowych ramek EEG/IMU/PPG."""
+        snapshot = app.get_raw_sensor_snapshot()
+        lines = [
+            "RAW SENSOR STREAMS",
+            f"EEG: {snapshot.get('eeg', '--')}",
+            f"IMU: {snapshot.get('imu', '--')}",
+            f"PPG: {snapshot.get('ppg', '--')}",
+        ]
+        self.raw_signals_text = "\n".join(lines)
 
     def _collect_session_health(self, app) -> SessionHealth:  # noqa: ANN001
         """Buduje agregat SessionHealth z telemetrii konektora i procesora."""
@@ -1166,6 +1185,13 @@ class NeuroGamingApp(App):
         logging.getLogger().addHandler(self._log_handler)
         self._sound_paths: dict[str, str] = {}
         self._sounds: dict[str, object] = {}
+        # Lock i cache ostatnich ramek sensorów używane przez zakładkę "Surowe sygnały".
+        self._raw_signal_lock = threading.Lock()
+        self._raw_sensor_values: dict[str, str] = {
+            "eeg": "--",
+            "imu": "--",
+            "ppg": "--",
+        }
         self.settings = AppSettings()
         # Flagi bezpieczeństwa używane przez ekran sterowania.
         self.safe_pause_active = False
@@ -1189,6 +1215,8 @@ class NeuroGamingApp(App):
 
         def _on_eeg(channel: str, samples) -> None:  # noqa: ANN001
             self.processor.add_samples(channel, samples)
+            # Zapisujemy skrót ostatniej ramki, aby UI mogło pokazać "live raw view".
+            self._remember_raw_signal("eeg", f"{channel}: {self._format_vector(samples.tolist())}")
             self.session_recorder.record_eeg_frame(
                 now_monotonic=time.monotonic(),
                 channel=channel,
@@ -1197,6 +1225,8 @@ class NeuroGamingApp(App):
 
         def _on_imu_frame(frame) -> None:  # noqa: ANN001
             self.processor.add_imu_frame(frame.sensor, frame.samples)
+            flat_xyz = frame.samples[-1].tolist() if len(frame.samples) else [0.0, 0.0, 0.0]
+            self._remember_raw_signal("imu", f"{frame.sensor}: {self._format_vector(flat_xyz)}")
             self.session_recorder.record_imu_frame(
                 now_monotonic=time.monotonic(),
                 sensor=frame.sensor,
@@ -1204,6 +1234,7 @@ class NeuroGamingApp(App):
             )
 
         def _on_ppg_frame(frame) -> None:  # noqa: ANN001
+            self._remember_raw_signal("ppg", f"{frame.channel}: {self._format_vector(frame.samples.tolist())}")
             self.session_recorder.record_ppg_frame(
                 now_monotonic=time.monotonic(),
                 channel=frame.channel,
@@ -1247,6 +1278,22 @@ class NeuroGamingApp(App):
         sm.add_widget(CalibrationScreen(name="calibration"))
         sm.add_widget(TestScreen(name="test"))
         return sm
+
+    def _remember_raw_signal(self, sensor: str, value: str) -> None:
+        """Aktualizuje cache surowych danych pojedynczego sensora."""
+        with self._raw_signal_lock:
+            self._raw_sensor_values[sensor] = value
+
+    def get_raw_sensor_snapshot(self) -> dict[str, str]:
+        """Zwraca bezpieczną kopię najnowszych próbek surowych danych."""
+        with self._raw_signal_lock:
+            return dict(self._raw_sensor_values)
+
+    @staticmethod
+    def _format_vector(values, limit: int = 5) -> str:  # noqa: ANN001
+        """Formatuje wektor próbek do krótkiej postaci tekstowej dla UI."""
+        normalized = [float(v) for v in values[:limit]]
+        return "[" + ", ".join(f"{v:.2f}" for v in normalized) + "]"
 
     def on_stop(self):
         logging.getLogger().removeHandler(self._log_handler)
