@@ -1,4 +1,4 @@
-"""
+﻿"""
 Muse S Athena BLE connector.
 
 Scans for a Muse S (or Muse 2) headband via Bluetooth Low Energy,
@@ -93,13 +93,13 @@ def configure_eeg_debug_logger(
     eeg_logger.disabled = False
     return eeg_logger, resolved_path
 
-# ──────────────────────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Muse BLE UUIDs
-# ──────────────────────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 MUSE_SERVICE_UUID = "0000fe8d-0000-1000-8000-00805f9b34fb"
 
-# Control characteristic – used to start / stop EEG streaming
+# Control characteristic â€“ used to start / stop EEG streaming
 CONTROL_UUID = "273e0001-4c4d-454d-96be-f03bac821358"
 
 # One notification characteristic per EEG channel (5 samples per packet)
@@ -125,7 +125,7 @@ PPG_UUIDS: dict[str, str] = {
     "PPG_IR": "273e0010-4c4d-454d-96be-f03bac821358",
     "PPG_RED": "273e0011-4c4d-454d-96be-f03bac821358",
 }
-# Maksymalny czas (sekundy) oczekiwania na pojawienie się charakterystyk EEG.
+# Maksymalny czas (sekundy) oczekiwania na pojawienie siÄ™ charakterystyk EEG.
 SERVICE_DISCOVERY_TIMEOUT_SECONDS = 30
 STREAM_WATCHDOG_TIMEOUT_SECONDS = 3.0
 RECONNECT_BACKOFF_SECONDS = (1.0, 2.0, 4.0, 8.0)
@@ -149,7 +149,7 @@ SENSOR_CHARACTERISTICS: dict[str, set[str]] = {
 
 
 class ConnectionState(str, Enum):
-    """Stany połączenia z Muse wykorzystywane przez centralną maszynę stanów."""
+    """Stany poĹ‚Ä…czenia z Muse wykorzystywane przez centralnÄ… maszynÄ™ stanĂłw."""
 
     IDLE = "IDLE"
     SCANNING = "SCANNING"
@@ -161,7 +161,7 @@ class ConnectionState(str, Enum):
 
 @dataclass(slots=True)
 class SessionMetrics:
-    """Metryki jakości sesji EEG logowane po zakończeniu połączenia."""
+    """Metryki jakoĹ›ci sesji EEG logowane po zakoĹ„czeniu poĹ‚Ä…czenia."""
 
     connected_since: float | None = None
     reconnect_count: int = 0
@@ -174,7 +174,7 @@ class SessionMetrics:
     logged: bool = False
 
     def reset(self) -> None:
-        """Czyści metryki przy starcie nowej sesji."""
+        """CzyĹ›ci metryki przy starcie nowej sesji."""
         self.connected_since = None
         self.reconnect_count = 0
         self.sample_interval_sum = 0.0
@@ -187,14 +187,14 @@ class SessionMetrics:
 
     @property
     def average_sample_interval(self) -> float:
-        """Zwraca średni interwał pomiędzy kolejnymi callbackami EEG."""
+        """Zwraca Ĺ›redni interwaĹ‚ pomiÄ™dzy kolejnymi callbackami EEG."""
         if self.sample_interval_count == 0:
             return 0.0
         return self.sample_interval_sum / self.sample_interval_count
 
     @property
     def dropout_percent(self) -> float:
-        """Szacuje procent brakujących próbek względem całej transmisji."""
+        """Szacuje procent brakujÄ…cych prĂłbek wzglÄ™dem caĹ‚ej transmisji."""
         expected = self.total_samples + self.dropout_samples
         if expected == 0:
             return 0.0
@@ -203,15 +203,15 @@ class SessionMetrics:
 
 @dataclass(slots=True)
 class ConnectorDevice:
-    """Lekki opis urządzenia, używany m.in. przy reconnect."""
+    """Lekki opis urzÄ…dzenia, uĹĽywany m.in. przy reconnect."""
 
     address: str
     name: str = "Muse"
     rssi: int | None = None
 
-# ──────────────────────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Known-devices persistent store
-# ──────────────────────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class KnownDevicesStore:
     """Persists the addresses and names of previously connected Muse devices.
@@ -231,7 +231,7 @@ class KnownDevicesStore:
         self._path = path
         self._entries: list[dict[str, str]] = self._load()
 
-    # ── public interface ───────────────────────────────────────────────────
+    # â”€â”€ public interface â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     @property
     def path(self) -> str:
@@ -273,7 +273,7 @@ class KnownDevicesStore:
         self._entries = []
         self._write()
 
-    # ── private helpers ────────────────────────────────────────────────────
+    # â”€â”€ private helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _load(self) -> list[dict[str, str]]:
         try:
@@ -299,19 +299,19 @@ class KnownDevicesStore:
             logger.warning("Could not save known devices to %s: %s", self._path, exc)
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Packet parser
-# ──────────────────────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _parse_eeg_packet(data: bytes) -> tuple[int, np.ndarray]:
     """Decode one EEG BLE notification.
 
     The Muse S encodes five 12-bit samples per notification packet:
-      bytes 0-1  – big-endian 16-bit sequence number
-      bytes 2-9  – five 12-bit sample values, packed big-endian
+      bytes 0-1  â€“ big-endian 16-bit sequence number
+      bytes 2-9  â€“ five 12-bit sample values, packed big-endian
 
-    Raw sample values are converted to µV using:
-        voltage = (raw - 2048) × 0.48828125
+    Raw sample values are converted to ÂµV using:
+        voltage = (raw - 2048) Ă— 0.48828125
 
     Parameters
     ----------
@@ -323,7 +323,7 @@ def _parse_eeg_packet(data: bytes) -> tuple[int, np.ndarray]:
     sequence:
         Packet sequence number.
     samples:
-        NumPy array of 5 voltage samples in µV.
+        NumPy array of 5 voltage samples in ÂµV.
     """
     sequence = struct.unpack(">H", data[:2])[0]
     payload = data[2:]
@@ -341,7 +341,7 @@ def _parse_eeg_packet(data: bytes) -> tuple[int, np.ndarray]:
 
 
 def _parse_imu_packet(data: bytes, *, scale: float) -> tuple[int, np.ndarray]:
-    """Dekoduje pakiet IMU do tablicy ``N×3`` (XYZ)."""
+    """Dekoduje pakiet IMU do tablicy ``NĂ—3`` (XYZ)."""
     if len(data) < 8:
         raise ValueError("IMU packet too short")
     values = struct.unpack(f">{len(data)//2}h", data[: (len(data) // 2) * 2])
@@ -355,7 +355,7 @@ def _parse_imu_packet(data: bytes, *, scale: float) -> tuple[int, np.ndarray]:
 
 
 def _parse_ppg_packet(data: bytes) -> tuple[int, np.ndarray]:
-    """Dekoduje pakiet PPG (2B sequence + próbki 24-bit)."""
+    """Dekoduje pakiet PPG (2B sequence + prĂłbki 24-bit)."""
     if len(data) < 5:
         raise ValueError("PPG packet too short")
     sequence = struct.unpack(">H", data[:2])[0]
@@ -375,9 +375,9 @@ def _parse_battery_payload(data: bytes) -> int:
     return int(max(0, min(100, data[0])))
 
 
-# ──────────────────────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Connector class
-# ──────────────────────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class MuseConnector:
     """Manages Bluetooth connection to a Muse S Athena device.
@@ -416,7 +416,7 @@ class MuseConnector:
         on_eeg:
             Called with ``(channel_name, samples)`` whenever new EEG data
             arrives.  *channel_name* is one of ``"TP9"``, ``"AF7"``,
-            ``"AF8"``, ``"TP10"``.  *samples* is a float32 array of 5 µV
+            ``"AF8"``, ``"TP10"``.  *samples* is a float32 array of 5 ÂµV
             values.  This callback is invoked from the background thread.
         on_status:
             Optional callback for human-readable status messages. Can also
@@ -491,7 +491,7 @@ class MuseConnector:
         if self._debug_log_path:
             logger.info("EEG debug log path: %s", self._debug_log_path)
 
-    # ── lifecycle ──────────────────────────────────────────────────────────
+    # â”€â”€ lifecycle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def start(self) -> None:
         """Start the background asyncio thread."""
@@ -514,7 +514,7 @@ class MuseConnector:
         if self._thread:
             self._thread.join(timeout=5)
 
-    # ── public API (thread-safe) ───────────────────────────────────────────
+    # â”€â”€ public API (thread-safe) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def scan(self, timeout: float = 5.0) -> None:
         """Scan for nearby Muse devices.  Populates ``self.devices``."""
@@ -532,7 +532,7 @@ class MuseConnector:
         future = asyncio.run_coroutine_threadsafe(
             self._async_connect(device), self._loop
         )
-        # Utrzymujemy spójny timeout całego połączenia z timeoutem discovery.
+        # Utrzymujemy spĂłjny timeout caĹ‚ego poĹ‚Ä…czenia z timeoutem discovery.
         future.result(timeout=SERVICE_DISCOVERY_TIMEOUT_SECONDS + 10)
 
     def disconnect(self) -> None:
@@ -599,12 +599,12 @@ class MuseConnector:
         self._status_callback = callback
 
     def set_stream_config(self, config: dict[str, bool]) -> None:
-        """Aktualizuje konfigurację aktywnych strumieni bez restartu aplikacji."""
+        """Aktualizuje konfiguracjÄ™ aktywnych strumieni bez restartu aplikacji."""
         self._stream_config.update({k: bool(v) for k, v in config.items()})
         if self._loop and self._loop.is_running():
             asyncio.run_coroutine_threadsafe(self._apply_stream_config(), self._loop)
 
-    # ── async implementation ───────────────────────────────────────────────
+    # â”€â”€ async implementation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _run_loop(self) -> None:
         asyncio.set_event_loop(self._loop)
@@ -615,7 +615,7 @@ class MuseConnector:
         self._status_callback(message)
 
     def _transition_state(self, new_state: ConnectionState, reason: str = "") -> None:
-        """Centralny handler przejść stanów i raportowania do UI."""
+        """Centralny handler przejĹ›Ä‡ stanĂłw i raportowania do UI."""
         with self._state_lock:
             old_state = self._state
             self._state = new_state
@@ -636,7 +636,7 @@ class MuseConnector:
         self._emit_status(status_message)
 
     async def _async_scan(self, timeout: float) -> None:
-        self._transition_state(ConnectionState.SCANNING, "Scanning for Muse devices…")
+        self._transition_state(ConnectionState.SCANNING, "Scanning for Muse devicesâ€¦")
         found: list[BLEDevice] = []
         devices = await BleakScanner.discover(timeout=timeout)
         for d in devices:
@@ -651,7 +651,7 @@ class MuseConnector:
         device_name = getattr(device, "name", "Muse") or "Muse"
         device_address = getattr(device, "address", str(device))
         self._manual_disconnect_requested = False
-        self._transition_state(ConnectionState.CONNECTING, f"Connecting to {device_name}…")
+        self._transition_state(ConnectionState.CONNECTING, f"Connecting to {device_name}â€¦")
         # Use address instead of BLEDevice object for better stability on Windows
         self._client = BleakClient(device_address)
         set_callback = getattr(self._client, "set_disconnected_callback", None)
@@ -700,19 +700,19 @@ class MuseConnector:
                     logger.debug("Pairing info: %s", e)
 
             # --- Aggressive Service Discovery ---
-            # Na Windows usługi BLE potrafią pojawić się z opóźnieniem po połączeniu.
-            # Dlatego odświeżamy listę usług przez maksymalnie 30 sekund.
+            # Na Windows usĹ‚ugi BLE potrafiÄ… pojawiÄ‡ siÄ™ z opĂłĹşnieniem po poĹ‚Ä…czeniu.
+            # Dlatego odĹ›wieĹĽamy listÄ™ usĹ‚ug przez maksymalnie 30 sekund.
             services_stabilized = False
             discovery_attempts = SERVICE_DISCOVERY_TIMEOUT_SECONDS
             all_chars: list[str] = []
             for attempt in range(1, discovery_attempts + 1):
                 logger.info("Service discovery attempt %d/%d...", attempt, discovery_attempts)
 
-                # Wymuszamy odświeżenie usług, bo sama właściwość .services
-                # może zwracać niepełny cache zaraz po zestawieniu połączenia.
+                # Wymuszamy odĹ›wieĹĽenie usĹ‚ug, bo sama wĹ‚aĹ›ciwoĹ›Ä‡ .services
+                # moĹĽe zwracaÄ‡ niepeĹ‚ny cache zaraz po zestawieniu poĹ‚Ä…czenia.
                 all_chars = await self._collect_characteristic_uuids()
 
-                # Sprawdzamy obecność kanału TP9 jako sygnał gotowości EEG.
+                # Sprawdzamy obecnoĹ›Ä‡ kanaĹ‚u TP9 jako sygnaĹ‚ gotowoĹ›ci EEG.
                 if any(uuid.startswith("273e0003") for uuid in all_chars):
                     logger.info("EEG characteristics discovered after %d attempts!", attempt)
                     services_stabilized = True
@@ -760,13 +760,30 @@ class MuseConnector:
             raise
 
     async def _collect_characteristic_uuids(self) -> list[str]:
-        """Zwraca listę UUID charakterystyk po wymuszonym odświeżeniu usług GATT."""
+        """Zwraca listÄ™ UUID charakterystyk po wymuszonym odĹ›wieĹĽeniu usĹ‚ug GATT."""
         if self._client is None:
             return []
 
         try:
-            # Preferujemy jawne pobranie usług, aby uniknąć nieaktualnego cache.
-            services = await self._client.get_services()
+            # [AI-CHANGE | 2026-04-18 07:38 UTC | v0.123]
+            # CO ZMIENIONO: Dodano wersjozalezne pobieranie uslug GATT, ktore
+            # najpierw sprawdza publiczne API `get_services`, a gdy go brak,
+            # korzysta z aktualnego cache `client.services`.
+            # DLACZEGO: Czesc wersji biblioteki bleak nie udostepnia metody
+            # `get_services`, co powodowalo AttributeError i zapetlenie prob
+            # wykrywania kanalu EEG bez realnego odswiezenia stanu klienta.
+            # JAK TO DZIALA: Kod pobiera referencje do metody tylko wtedy, gdy
+            # obiekt klienta rzeczywiscie ja udostepnia. W przeciwnym razie
+            # zwraca wylacznie aktualny snapshot `services`, a przy braku danych
+            # dalej preferuje pusty wynik zamiast niepewnej detekcji.
+            # TODO: Dodac integracyjny test z realnym backendem bleak na Windows,
+            # aby potwierdzic kiedy cache `services` staje sie kompletne po connect.
+            refresh_services = getattr(self._client, "get_services", None)
+            services = (
+                await refresh_services()
+                if callable(refresh_services)
+                else self._client.services
+            )
             if not services:
                 services = self._client.services
         except Exception as exc:
@@ -788,7 +805,7 @@ class MuseConnector:
         known_names = ", ".join(
             e["name"] or e["address"] for e in self._store.all()
         )
-        self._transition_state(ConnectionState.SCANNING, f"Searching for known device(s): {known_names}…")
+        self._transition_state(ConnectionState.SCANNING, f"Searching for known device(s): {known_names}â€¦")
         logger.info("Auto-connect: searching for known addresses %s", known)
 
         all_devices = await BleakScanner.discover(timeout=timeout)
@@ -833,7 +850,7 @@ class MuseConnector:
         """Return a BLE notification callback bound to *channel*."""
 
         def handler(sender, data: bytearray) -> None:  # noqa: ANN001
-            # Tylko aktywny strumień EEG może aktualizować próbki.
+            # Tylko aktywny strumieĹ„ EEG moĹĽe aktualizowaÄ‡ prĂłbki.
             if not self._device_state.get("streaming") or not self._stream_config.get("eeg", True):
                 return
 
@@ -852,7 +869,7 @@ class MuseConnector:
         return handler
 
     def _make_imu_handler(self, sensor: str, scale: float) -> Callable:
-        """Buduje callback BLE dla pakietów IMU."""
+        """Buduje callback BLE dla pakietĂłw IMU."""
 
         def handler(sender, data: bytearray) -> None:  # noqa: ANN001
             if not self._device_state.get("streaming") or not self._stream_config.get(sensor, True):
@@ -875,7 +892,7 @@ class MuseConnector:
         return handler
 
     def _make_ppg_handler(self, channel: str) -> Callable:
-        """Buduje callback BLE dla pakietów PPG."""
+        """Buduje callback BLE dla pakietĂłw PPG."""
 
         def handler(sender, data: bytearray) -> None:  # noqa: ANN001
             if not self._device_state.get("streaming") or not self._stream_config.get("ppg", True):
@@ -898,7 +915,7 @@ class MuseConnector:
         return handler
 
     async def _apply_stream_config(self) -> int:
-        """Włącza/wyłącza notyfikacje BLE zgodnie z aktualną konfiguracją."""
+        """WĹ‚Ä…cza/wyĹ‚Ä…cza notyfikacje BLE zgodnie z aktualnÄ… konfiguracjÄ…."""
         if self._client is None or not self._client.is_connected:
             return 0
         eeg_subscribed = 0
@@ -956,7 +973,7 @@ class MuseConnector:
         return 0
 
     def _emit_telemetry(self) -> None:
-        """Publikuje ujednoliconą telemetrię urządzenia do warstw wyżej."""
+        """Publikuje ujednoliconÄ… telemetriÄ™ urzÄ…dzenia do warstw wyĹĽej."""
         telemetry = DeviceTelemetry(
             battery_level=self._device_state.get("battery_level"),
             stream_activity=dict(self._device_state.get("stream_activity", {})),
@@ -1027,18 +1044,18 @@ class MuseConnector:
             await asyncio.sleep(20)
 
     def _start_watchdog(self) -> None:
-        """Uruchamia watchdog, który pilnuje czy napływają próbki EEG."""
+        """Uruchamia watchdog, ktĂłry pilnuje czy napĹ‚ywajÄ… prĂłbki EEG."""
         self._cancel_watchdog()
         self._watchdog_task = asyncio.create_task(self._stream_watchdog_loop())
 
     def _cancel_watchdog(self) -> None:
-        """Zatrzymuje watchdog streamu EEG, jeżeli był aktywny."""
+        """Zatrzymuje watchdog streamu EEG, jeĹĽeli byĹ‚ aktywny."""
         if self._watchdog_task:
             self._watchdog_task.cancel()
             self._watchdog_task = None
 
     async def _stream_watchdog_loop(self) -> None:
-        """Wykrywa timeout próbek i uruchamia automatyczne odzyskiwanie połączenia."""
+        """Wykrywa timeout prĂłbek i uruchamia automatyczne odzyskiwanie poĹ‚Ä…czenia."""
         while self._connected and not self._manual_disconnect_requested:
             await asyncio.sleep(0.5)
             if self._state != ConnectionState.STREAMING:
@@ -1059,7 +1076,7 @@ class MuseConnector:
             return
 
     def _on_client_disconnected(self, _client: BleakClient) -> None:
-        """Callback bleak-a uruchamiany przy niespodziewanej utracie połączenia."""
+        """Callback bleak-a uruchamiany przy niespodziewanej utracie poĹ‚Ä…czenia."""
         if self._manual_disconnect_requested or self._loop is None:
             return
         if self._state not in {ConnectionState.STREAMING, ConnectionState.CONNECTING}:
@@ -1072,7 +1089,7 @@ class MuseConnector:
             )
 
     async def _recover_stream(self, reason: str) -> None:
-        """Próbuje odzyskać streaming używając polityki backoff."""
+        """PrĂłbuje odzyskaÄ‡ streaming uĹĽywajÄ…c polityki backoff."""
         if self._active_device is None:
             self._transition_state(ConnectionState.ERROR, "Recovery failed: no active device.")
             return
@@ -1121,7 +1138,7 @@ class MuseConnector:
         self._session_metrics.sequence_by_channel[channel] = sequence
 
     def _log_session_metrics(self, reason: str) -> None:
-        """Loguje podsumowanie sesji (czas, reconnect, średni interwał i dropout)."""
+        """Loguje podsumowanie sesji (czas, reconnect, Ĺ›redni interwaĹ‚ i dropout)."""
         if self._session_metrics.logged:
             return
         if self._session_metrics.connected_since is None:
@@ -1139,3 +1156,4 @@ class MuseConnector:
             self._session_metrics.dropout_percent,
         )
         self._session_metrics.logged = True
+

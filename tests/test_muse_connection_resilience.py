@@ -1,4 +1,4 @@
-"""Testy odporności połączenia MuseConnector."""
+﻿"""Testy odpornoĹ›ci poĹ‚Ä…czenia MuseConnector."""
 
 import asyncio
 import time
@@ -16,14 +16,14 @@ class _FakeChar:
 
 
 class _FakeService:
-    """Minimalna reprezentacja usługi BLE."""
+    """Minimalna reprezentacja usĹ‚ugi BLE."""
 
     def __init__(self, characteristics: list[_FakeChar]) -> None:
         self.characteristics = characteristics
 
 
 class _FakeServices(list):
-    """Kontener usług z metodą zgodną z bleak."""
+    """Kontener usĹ‚ug z metodÄ… zgodnÄ… z bleak."""
 
     def get_characteristic(self, target_uuid: str):
         target = target_uuid.lower()
@@ -35,7 +35,7 @@ class _FakeServices(list):
 
 
 class _FakeBleakClient:
-    """Mock klienta BLE do testów bez fizycznego urządzenia."""
+    """Mock klienta BLE do testĂłw bez fizycznego urzÄ…dzenia."""
 
     def __init__(self, _address: str) -> None:
         self.is_connected = False
@@ -66,9 +66,40 @@ class _FakeBleakClient:
     def set_disconnected_callback(self, callback):
         self._disconnect_callback = callback
 
+class _FakeBleakClientWithoutGetServices:
+    """Mock klienta BLE zgodny z wersjami bleak bez get_services."""
+
+    def __init__(self, _address: str) -> None:
+        self.is_connected = True
+        self.services = _FakeServices([
+            _FakeService([
+                _FakeChar("273e0003-4c4d-454d-96be-f03bac821358"),
+                _FakeChar("273e0004-4c4d-454d-96be-f03bac821358"),
+            ])
+        ])
+
+
+# [AI-CHANGE | 2026-04-18 07:38 UTC | v0.123]
+# CO ZMIENIONO: Dodano test regresyjny dla klienta bleak, ktory nie ma
+# publicznej metody `get_services`.
+# DLACZEGO: To dokladnie odtwarza zgloszony blad AttributeError i pilnuje,
+# aby konektor czytal cache uslug bez przerywania detekcji.
+# JAK TO DZIALA: Test podstawia klient bez `get_services`, ale z kompletnym
+# polem `services`, a nastepnie sprawdza, czy konektor zwraca UUID-y EEG.
+# TODO: Rozszerzyc test o scenariusz, w ktorym cache uslug pojawia sie dopiero
+# po kilku probach odczytu po zestawieniu polaczenia.
+def test_collect_characteristic_uuids_supports_bleak_without_get_services():
+    connector = MuseConnector(on_eeg=lambda _ch, _samples: None)
+    connector._client = _FakeBleakClientWithoutGetServices("AA:BB")
+
+    uuids = asyncio.run(connector._collect_characteristic_uuids())
+
+    assert "273e0003-4c4d-454d-96be-f03bac821358" in uuids
+    assert "273e0004-4c4d-454d-96be-f03bac821358" in uuids
+
 
 def test_watchdog_timeout_triggers_recovering_state(monkeypatch):
-    """Brak próbek EEG powinien uruchomić ścieżkę RECOVERING."""
+    """Brak prĂłbek EEG powinien uruchomiÄ‡ Ĺ›cieĹĽkÄ™ RECOVERING."""
     connector = MuseConnector(on_eeg=lambda _ch, _samples: None)
     connector._connected = True
     connector._watchdog_timeout_seconds = 0.1
@@ -90,7 +121,7 @@ def test_watchdog_timeout_triggers_recovering_state(monkeypatch):
 
 
 def test_connect_enters_error_state_when_eeg_characteristics_are_missing(monkeypatch):
-    """Brak kanałów EEG powinien zakończyć próbę połączenia stanem ERROR."""
+    """Brak kanaĹ‚Ăłw EEG powinien zakoĹ„czyÄ‡ prĂłbÄ™ poĹ‚Ä…czenia stanem ERROR."""
     connector = MuseConnector(on_eeg=lambda _ch, _samples: None)
     status_messages: list[str] = []
     connector.set_status_callback(status_messages.append)
@@ -114,7 +145,7 @@ def test_connect_enters_error_state_when_eeg_characteristics_are_missing(monkeyp
 
 
 def test_recover_stream_reconnects_with_backoff(monkeypatch):
-    """Reconnect powinien ponowić próbę i wrócić do STREAMING po sukcesie."""
+    """Reconnect powinien ponowiÄ‡ prĂłbÄ™ i wrĂłciÄ‡ do STREAMING po sukcesie."""
     connector = MuseConnector(on_eeg=lambda _ch, _samples: None)
     status_messages: list[str] = []
     connector.set_status_callback(status_messages.append)
@@ -140,3 +171,4 @@ def test_recover_stream_reconnects_with_backoff(monkeypatch):
     assert connector._state == ConnectionState.STREAMING
     assert connector._session_metrics.reconnect_count == 2
     assert any("Reconnect succeeded" in msg for msg in status_messages)
+
