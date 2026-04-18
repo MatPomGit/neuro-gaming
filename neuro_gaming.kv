@@ -201,7 +201,7 @@
 
                 BoxLayout:
                     size_hint_y: None
-                    height: '196dp'
+                    height: '312dp'
                     orientation: 'vertical'
                     spacing: 8
                     Label:
@@ -229,6 +229,22 @@
                         background_normal: ''
                         background_color: (0.1, 0.35, 0.2, 1)
                         on_release: root.go_to_test()
+                    Button:
+                        text: 'MODUŁ TRENINGU KONCENTRACJI'
+                        size_hint_y: None
+                        height: '44dp'
+                        font_size: '12sp'
+                        background_normal: ''
+                        background_color: (0.16, 0.2, 0.42, 1)
+                        on_release: root.go_to_focus_module()
+                    Button:
+                        text: 'MODUŁ ĆWICZEŃ ODDECHOWYCH'
+                        size_hint_y: None
+                        height: '44dp'
+                        font_size: '12sp'
+                        background_normal: ''
+                        background_color: (0.22, 0.2, 0.38, 1)
+                        on_release: root.go_to_breath_module()
                     Button:
                         text: 'CLOSE APP'
                         size_hint_y: None
@@ -610,6 +626,14 @@
                 on_release: root.disconnect()
 
             Button:
+                text: 'WRÓĆ'
+                font_size: '12sp'
+                bold: True
+                background_normal: ''
+                background_color: (0.2, 0.2, 0.24, 1)
+                on_release: root.go_to_main_menu()
+
+            Button:
                 text: 'CLOSE APP'
                 font_size: '12sp'
                 bold: True
@@ -905,12 +929,12 @@
                 on_release: root.start_calibration()
 
             Button:
-                text: 'POWRÓT DO GRY'
+                text: 'WRÓĆ'
                 font_size: '13sp'
                 bold: True
                 background_normal: ''
                 background_color: (0.15, 0.15, 0.2, 1)
-                on_release: root.go_back()
+                on_release: root.go_to_main_menu()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Diagnostics Screen
@@ -1028,11 +1052,173 @@
                     on_release: root.clear_recording()
 
             Button:
-                text: 'EXIT DIAGNOSTICS'
+                text: 'WRÓĆ'
                 font_size: '12sp'
                 bold: True
                 size_hint_y: None
                 height: '40dp'
                 background_normal: ''
                 background_color: (0.15, 0.15, 0.2, 1)
-                on_release: root.go_back()
+                on_release: root.go_to_main_menu()
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Focus Training Module
+# ─────────────────────────────────────────────────────────────────────────────
+
+<FocusModuleScreen>:
+    canvas.before:
+        Color:
+            rgba: (0.04, 0.05, 0.08, 1)
+        Rectangle:
+            pos: self.pos
+            size: self.size
+
+    BoxLayout:
+        orientation: 'vertical'
+        padding: [28, 28, 28, 24]
+        spacing: 14
+
+        Label:
+            text: 'MODUŁ TRENINGU KONCENTRACJI'
+            font_size: '22sp'
+            bold: True
+            size_hint_y: None
+            height: '44dp'
+            color: (1, 1, 1, 1)
+
+        Label:
+            text: 'Krótki trening czasu skupienia przed rozgrywką EEG.'
+            font_size: '11sp'
+            size_hint_y: None
+            height: '24dp'
+            color: (0.68, 0.74, 0.84, 1)
+
+        BoxLayout:
+            orientation: 'vertical'
+            padding: [12, 12, 12, 12]
+            spacing: 8
+            canvas.before:
+                Color:
+                    rgba: (0.08, 0.1, 0.16, 1)
+                RoundedRectangle:
+                    pos: self.pos
+                    size: self.size
+                    radius: [6]
+
+            Label:
+                text: root.status_text
+                font_size: '13sp'
+                color: (0.35, 0.9, 0.62, 1) if root.is_running else (0.85, 0.9, 0.95, 1)
+                halign: 'center'
+                text_size: self.size
+
+            Label:
+                text: f'Czas sesji: {int(root.elapsed_seconds)} s'
+                font_size: '28sp'
+                bold: True
+                color: (0.2, 0.7, 1, 1)
+
+        Widget:
+
+        BoxLayout:
+            size_hint_y: None
+            height: '48dp'
+            spacing: 10
+            Button:
+                text: 'START'
+                background_normal: ''
+                background_color: (0.16, 0.48, 0.88, 1)
+                disabled: root.is_running
+                on_release: root.start_session()
+            Button:
+                text: 'STOP'
+                background_normal: ''
+                background_color: (0.44, 0.18, 0.18, 1)
+                disabled: not root.is_running
+                on_release: root.stop_session()
+            Button:
+                text: 'WRÓĆ'
+                background_normal: ''
+                background_color: (0.15, 0.15, 0.2, 1)
+                on_release: root.go_to_main_menu()
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Breathing Module
+# ─────────────────────────────────────────────────────────────────────────────
+
+<BreathModuleScreen>:
+    canvas.before:
+        Color:
+            rgba: (0.04, 0.04, 0.09, 1)
+        Rectangle:
+            pos: self.pos
+            size: self.size
+
+    BoxLayout:
+        orientation: 'vertical'
+        padding: [28, 28, 28, 24]
+        spacing: 14
+
+        Label:
+            text: 'MODUŁ ĆWICZEŃ ODDECHOWYCH'
+            font_size: '22sp'
+            bold: True
+            size_hint_y: None
+            height: '44dp'
+            color: (1, 1, 1, 1)
+
+        Label:
+            text: 'Sekwencja oddechowa 4-2-6 do stabilizacji przed sesją.'
+            font_size: '11sp'
+            size_hint_y: None
+            height: '24dp'
+            color: (0.68, 0.74, 0.84, 1)
+
+        BoxLayout:
+            orientation: 'vertical'
+            padding: [12, 12, 12, 12]
+            spacing: 8
+            canvas.before:
+                Color:
+                    rgba: (0.1, 0.09, 0.18, 1)
+                RoundedRectangle:
+                    pos: self.pos
+                    size: self.size
+                    radius: [6]
+
+            Label:
+                text: root.phase_text
+                font_size: '34sp'
+                bold: True
+                color: (0.4, 0.82, 1.0, 1)
+
+            Label:
+                text: root.instruction_text
+                font_size: '13sp'
+                color: (0.86, 0.88, 0.95, 1)
+                halign: 'center'
+                text_size: self.size
+
+        Widget:
+
+        BoxLayout:
+            size_hint_y: None
+            height: '48dp'
+            spacing: 10
+            Button:
+                text: 'START'
+                background_normal: ''
+                background_color: (0.24, 0.48, 0.9, 1)
+                disabled: root.is_running
+                on_release: root.start_breathing()
+            Button:
+                text: 'STOP'
+                background_normal: ''
+                background_color: (0.44, 0.18, 0.18, 1)
+                disabled: not root.is_running
+                on_release: root.stop_breathing()
+            Button:
+                text: 'WRÓĆ'
+                background_normal: ''
+                background_color: (0.15, 0.15, 0.2, 1)
+                on_release: root.go_to_main_menu()
