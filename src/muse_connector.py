@@ -146,6 +146,7 @@ SENSOR_CHARACTERISTICS: dict[str, set[str]] = {
         "273e0011-4c4d-454d-96be-f03bac821358",
     },
 }
+_EEG_UUID_SET = {uuid.lower() for uuid in EEG_UUIDS.values()}
 
 
 class ConnectionState(str, Enum):
@@ -712,8 +713,9 @@ class MuseConnector:
                 # moĹĽe zwracaÄ‡ niepeĹ‚ny cache zaraz po zestawieniu poĹ‚Ä…czenia.
                 all_chars = await self._collect_characteristic_uuids()
 
-                # Sprawdzamy obecnoĹ›Ä‡ kanaĹ‚u TP9 jako sygnaĹ‚ gotowoĹ›ci EEG.
-                if any(uuid.startswith("273e0003") for uuid in all_chars):
+                # Sprawdzamy dowolny kanał EEG (nie tylko TP9), bo część backendów
+                # BLE raportuje charakterystyki w różnej kolejności.
+                if any(uuid in _EEG_UUID_SET for uuid in all_chars):
                     logger.info("EEG characteristics discovered after %d attempts!", attempt)
                     services_stabilized = True
                     break
@@ -764,36 +766,41 @@ class MuseConnector:
         if self._client is None:
             return []
 
+        services = None
         try:
-            # [AI-CHANGE | 2026-04-18 07:38 UTC | v0.123]
-            # CO ZMIENIONO: Dodano wersjozalezne pobieranie uslug GATT, ktore
-            # najpierw sprawdza publiczne API `get_services`, a gdy go brak,
-            # korzysta z aktualnego cache `client.services`.
-            # DLACZEGO: Czesc wersji biblioteki bleak nie udostepnia metody
-            # `get_services`, co powodowalo AttributeError i zapetlenie prob
-            # wykrywania kanalu EEG bez realnego odswiezenia stanu klienta.
-            # JAK TO DZIALA: Kod pobiera referencje do metody tylko wtedy, gdy
-            # obiekt klienta rzeczywiscie ja udostepnia. W przeciwnym razie
-            # zwraca wylacznie aktualny snapshot `services`, a przy braku danych
-            # dalej preferuje pusty wynik zamiast niepewnej detekcji.
-            # TODO: Dodac integracyjny test z realnym backendem bleak na Windows,
-            # aby potwierdzic kiedy cache `services` staje sie kompletne po connect.
+            # Najpierw próbujemy oficjalnej metody klienta, bo ona zwykle
+            # odświeża cache usług najbardziej niezawodnie.
             refresh_services = getattr(self._client, "get_services", None)
-            services = (
-                await refresh_services()
-                if callable(refresh_services)
-                else self._client.services
-            )
-            if not services:
-                services = self._client.services
+            if callable(refresh_services):
+                services = await refresh_services()
         except Exception as exc:
-            logger.debug("Service refresh failed, using cached services: %s", exc)
-            services = self._client.services
+            logger.debug("Client get_services failed: %s", exc)
+
+        if not services:
+            try:
+                # Fallback dla backendów bleak, które nie wystawiają API
+                # `client.get_services`, ale mają je na obiekcie backend.
+                backend = getattr(self._client, "_backend", None)
+                backend_refresh = getattr(backend, "get_services", None)
+                if callable(backend_refresh):
+                    services = await backend_refresh()
+            except Exception as exc:
+                logger.debug("Backend get_services failed: %s", exc)
+
+        if not services:
+            services = getattr(self._client, "services", None)
 
         if not services:
             return []
 
-        return [ch.uuid.lower() for service in services for ch in service.characteristics]
+        uuids: list[str] = []
+        for service in services:
+            characteristics = getattr(service, "characteristics", [])
+            for characteristic in characteristics:
+                uuid = getattr(characteristic, "uuid", None)
+                if uuid:
+                    uuids.append(str(uuid).lower())
+        return uuids
 
     async def _async_auto_connect(self, timeout: float) -> bool:
         """Scan and connect to the first known device found."""
@@ -1156,4 +1163,3 @@ class MuseConnector:
             self._session_metrics.dropout_percent,
         )
         self._session_metrics.logged = True
-

@@ -79,6 +79,29 @@ class _FakeBleakClientWithoutGetServices:
         ])
 
 
+class _FakeBackendWithServices:
+    """Mock backendu bleak udostępniający get_services."""
+
+    def __init__(self) -> None:
+        self._services = _FakeServices([
+            _FakeService([
+                _FakeChar("273e0006-4c4d-454d-96be-f03bac821358"),
+            ])
+        ])
+
+    async def get_services(self):
+        return self._services
+
+
+class _FakeBleakClientWithBackendOnly:
+    """Mock klienta bez get_services, ale z backendowym fallbackiem."""
+
+    def __init__(self, _address: str) -> None:
+        self.is_connected = True
+        self.services = _FakeServices([])
+        self._backend = _FakeBackendWithServices()
+
+
 # [AI-CHANGE | 2026-04-18 07:38 UTC | v0.123]
 # CO ZMIENIONO: Dodano test regresyjny dla klienta bleak, ktory nie ma
 # publicznej metody `get_services`.
@@ -96,6 +119,16 @@ def test_collect_characteristic_uuids_supports_bleak_without_get_services():
 
     assert "273e0003-4c4d-454d-96be-f03bac821358" in uuids
     assert "273e0004-4c4d-454d-96be-f03bac821358" in uuids
+
+
+def test_collect_characteristic_uuids_uses_backend_fallback():
+    """Konektor powinien odczytać usługi z backendu, gdy klient ich nie ma."""
+    connector = MuseConnector(on_eeg=lambda _ch, _samples: None)
+    connector._client = _FakeBleakClientWithBackendOnly("AA:BB")
+
+    uuids = asyncio.run(connector._collect_characteristic_uuids())
+
+    assert "273e0006-4c4d-454d-96be-f03bac821358" in uuids
 
 
 def test_watchdog_timeout_triggers_recovering_state(monkeypatch):
@@ -171,4 +204,3 @@ def test_recover_stream_reconnects_with_backoff(monkeypatch):
     assert connector._state == ConnectionState.STREAMING
     assert connector._session_metrics.reconnect_count == 2
     assert any("Reconnect succeeded" in msg for msg in status_messages)
-
