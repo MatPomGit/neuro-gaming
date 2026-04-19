@@ -279,6 +279,38 @@ class TestAsyncAutoConnect:
 
         assert result is True
 
+    def test_auto_connect_falls_back_to_next_known_device_on_failure(self, tmp_path):
+        """Auto-connect powinien próbować kolejnych znanych urządzeń po błędzie."""
+        path = str(tmp_path / "devices.json")
+        store = KnownDevicesStore(path)
+        store.save("AA:BB:CC:DD:EE:01", "Muse-1")
+        store.save("AA:BB:CC:DD:EE:02", "Muse-2")
+
+        connector = MuseConnector(on_eeg=lambda ch, s: None, known_devices_path=path)
+
+        first = MagicMock()
+        first.address = "AA:BB:CC:DD:EE:01"
+        first.name = "Muse-1"
+        first.rssi = -30
+        second = MagicMock()
+        second.address = "AA:BB:CC:DD:EE:02"
+        second.name = "Muse-2"
+        second.rssi = -65
+
+        calls: list[str] = []
+
+        async def _connect_with_single_failure(device):
+            calls.append(device.address)
+            if device.address.endswith("01"):
+                raise RuntimeError("temporary failure")
+
+        with patch("src.muse_connector.BleakScanner.discover", new=AsyncMock(return_value=[second, first])):
+            with patch.object(connector, "_async_connect", side_effect=_connect_with_single_failure):
+                result = self._run(connector._async_auto_connect(timeout=1.0))
+
+        assert result is True
+        assert calls == ["AA:BB:CC:DD:EE:01", "AA:BB:CC:DD:EE:02"]
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # MuseConnector – device is saved after successful _async_connect
@@ -300,7 +332,6 @@ class TestDeviceSavedOnConnect:
         mock_client = AsyncMock()
         mock_client.is_connected = True
         mock_client.connect = AsyncMock()
-        mock_client.get_services = AsyncMock(return_value=[])
         mock_client.read_gatt_char = AsyncMock(return_value=b"\x50")
         mock_client.start_notify = AsyncMock()
         mock_client.write_gatt_char = AsyncMock()
@@ -311,6 +342,7 @@ class TestDeviceSavedOnConnect:
         mock_services = MagicMock()
         mock_services.__iter__.return_value = iter([mock_service])
         mock_services.get_characteristic.return_value = object()
+        mock_client.get_services = AsyncMock(return_value=mock_services)
         mock_client.services = mock_services
 
         with patch("src.muse_connector.BleakClient", return_value=mock_client):
