@@ -204,3 +204,25 @@ def test_recover_stream_reconnects_with_backoff(monkeypatch):
     assert connector._state == ConnectionState.STREAMING
     assert connector._session_metrics.reconnect_count == 2
     assert any("Reconnect succeeded" in msg for msg in status_messages)
+
+
+def test_connect_with_retries_succeeds_after_temporary_failure():
+    """Mechanizm retry powinien zestawić połączenie po chwilowym błędzie."""
+    connector = MuseConnector(on_eeg=lambda _ch, _samples: None)
+
+    class _RetryClient:
+        def __init__(self) -> None:
+            self.is_connected = False
+            self.attempts = 0
+
+        async def connect(self) -> None:
+            self.attempts += 1
+            if self.attempts == 1:
+                raise RuntimeError("temporary BLE issue")
+            self.is_connected = True
+
+    connector._client = _RetryClient()
+    asyncio.run(connector._connect_with_retries("Muse-Test"))
+
+    assert connector._client.attempts == 2
+    assert connector._client.is_connected is True

@@ -129,6 +129,10 @@ PPG_UUIDS: dict[str, str] = {
 SERVICE_DISCOVERY_TIMEOUT_SECONDS = 30
 STREAM_WATCHDOG_TIMEOUT_SECONDS = 3.0
 RECONNECT_BACKOFF_SECONDS = (1.0, 2.0, 4.0, 8.0)
+# Maksymalna liczba prób połączenia w ramach pojedynczego wywołania connect.
+CONNECT_RETRY_ATTEMPTS = 3
+# Krótki backoff pomiędzy kolejnymi próbami zestawienia sesji BLE.
+CONNECT_RETRY_BACKOFF_SECONDS = (0.5, 1.0, 2.0)
 
 # Known Muse data characteristics (used for capability reporting in UI)
 SENSOR_CHARACTERISTICS: dict[str, set[str]] = {
@@ -667,19 +671,7 @@ class MuseConnector:
         )
         
         try:
-            # On Windows, connecting can sometimes be flaky. We try to connect 
-            # and verify the session stays active.
-            try:
-                await self._client.connect()
-            except Exception as e:
-                logger.warning("Initial connection failed: %s. Retrying in 1s...", e)
-                await asyncio.sleep(1.0)
-                await self._client.connect()
-            
-            if not self._client.is_connected:
-                logger.warning("Connection established but immediately lost. Retrying...")
-                await asyncio.sleep(1.0)
-                await self._client.connect()
+            await self._connect_with_retries(device_name)
 
             self._connected = True
             
@@ -761,6 +753,58 @@ class MuseConnector:
                 await self._client.disconnect()
             raise
 
+    async def _connect_with_retries(self, device_name: str) -> None:
+        """Podejmuje kilka prób połączenia BLE z kontrolowanym backoffem."""
+        if self._client is None:
+            raise RuntimeError("BLE client is not initialized.")
+
+        attempts = max(CONNECT_RETRY_ATTEMPTS, 1)
+        backoffs = list(CONNECT_RETRY_BACKOFF_SECONDS)
+        if len(backoffs) < attempts:
+            backoffs.extend([backoffs[-1] if backoffs else 1.0] * (attempts - len(backoffs)))
+
+        last_error: Exception | None = None
+        for attempt in range(1, attempts + 1):
+            try:
+                await self._client.connect()
+                if self._client.is_connected:
+                    if attempt > 1:
+                        logger.info(
+                            "Connected to %s on retry attempt %d/%d.",
+                            device_name,
+                            attempt,
+                            attempts,
+                        )
+                    return
+                last_error = RuntimeError("Connection established but immediately lost.")
+                logger.warning(
+                    "Connection attempt %d/%d to %s succeeded but link dropped immediately.",
+                    attempt,
+                    attempts,
+                    device_name,
+                )
+            except Exception as exc:
+                last_error = exc
+                logger.warning(
+                    "Connection attempt %d/%d to %s failed: %s",
+                    attempt,
+                    attempts,
+                    device_name,
+                    exc,
+                )
+
+            if attempt < attempts:
+                wait_seconds = backoffs[attempt - 1]
+                self._emit_status(
+                    f"[{ConnectionState.CONNECTING.value}] "
+                    f"Retrying {device_name} connection ({attempt + 1}/{attempts}) in {wait_seconds:.1f}s…"
+                )
+                await asyncio.sleep(wait_seconds)
+
+        raise RuntimeError(
+            f"Unable to establish a stable BLE connection after {attempts} attempts: {last_error}"
+        )
+
     async def _collect_characteristic_uuids(self) -> list[str]:
         """Zwraca listÄ™ UUID charakterystyk po wymuszonym odĹ›wieĹĽeniu usĹ‚ug GATT."""
         if self._client is None:
@@ -816,13 +860,34 @@ class MuseConnector:
         logger.info("Auto-connect: searching for known addresses %s", known)
 
         all_devices = await BleakScanner.discover(timeout=timeout)
-        for d in all_devices:
-            if d.address.upper() in known:
-                logger.info("Auto-connect: found known device %s (%s)", d.name, d.address)
+        known_candidates = [d for d in all_devices if d.address.upper() in known]
+        known_candidates.sort(key=lambda item: getattr(item, "rssi", -9999), reverse=True)
+
+        for d in known_candidates:
+            logger.info(
+                "Auto-connect: trying known device %s (%s), RSSI=%s",
+                d.name,
+                d.address,
+                getattr(d, "rssi", "n/a"),
+            )
+            try:
                 await self._async_connect(d)
                 return True
+            except Exception as exc:
+                logger.warning(
+                    "Auto-connect: failed for %s (%s): %s",
+                    d.name,
+                    d.address,
+                    exc,
+                )
+                self._emit_status(
+                    f"[{ConnectionState.RECOVERING.value}] Auto-connect fallback: next known device…"
+                )
 
-        self._transition_state(ConnectionState.IDLE, "Known device(s) not found nearby.")
+        if known_candidates:
+            self._transition_state(ConnectionState.ERROR, "Known device(s) found, but connection failed.")
+        else:
+            self._transition_state(ConnectionState.IDLE, "Known device(s) not found nearby.")
         return False
 
     async def _async_disconnect(
