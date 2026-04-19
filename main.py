@@ -57,7 +57,11 @@ from kivy.uix.switch import Switch
 from kivy.uix.textinput import TextInput
 
 from src.game_controller import GameController
-from src.muse_connector import MuseConnector
+from src.muse_connector import (
+    CONNECT_RETRY_ATTEMPTS,
+    CONNECT_RETRY_BACKOFF_SECONDS,
+    MuseConnector,
+)
 from src.settings import AppSettings, load_settings, save_settings
 from src.single_instance import acquire_lock, release_lock
 from src.session_recorder import SessionRecorder
@@ -127,6 +131,12 @@ class ScanScreen(Screen):
     fsm_state = StringProperty("IDLE")
     scan_pulse = NumericProperty(1.0)
     fsm_color = ListProperty([0.6, 0.6, 0.7, 1.0])
+    connect_retry_attempts = NumericProperty(CONNECT_RETRY_ATTEMPTS)
+    connect_retry_schedule = StringProperty("")
+    auto_connect_strategy = StringProperty(
+        "Known devices are prioritised by strongest signal (RSSI)."
+    )
+    progress_hint = StringProperty("Ready to scan and connect.")
 
     _pulse_anim = None
 
@@ -134,6 +144,8 @@ class ScanScreen(Screen):
         app = App.get_running_app()
         app.connector.start()
         app.connector.set_status_callback(self._update_status)
+        # Pokazujemy użytkownikowi aktualne parametry retry przy wejściu na ekran.
+        self.connect_retry_schedule = self._format_retry_schedule()
         
         # Auto-scan if no device is connected and we are not already scanning
         if not app.connector.is_connected and not self.is_scanning:
@@ -258,6 +270,8 @@ class ScanScreen(Screen):
     def _update_status(self, msg: str) -> None:
         self.status_text = msg
         upper_msg = msg.upper()
+        # Tłumaczymy techniczne statusy konektora na krótkie, intuicyjne podpowiedzi UI.
+        self.progress_hint = self._derive_progress_hint(msg)
         if "SCANNING" in upper_msg:
             self.fsm_state = "SCANNING"
         elif "CONNECTING" in upper_msg:
@@ -286,6 +300,29 @@ class ScanScreen(Screen):
 
     def close_app(self) -> None:
         App.get_running_app().shutdown_app()
+
+    def _format_retry_schedule(self) -> str:
+        """Buduje czytelną listę opóźnień retry pokazywaną na ekranie."""
+        if not CONNECT_RETRY_BACKOFF_SECONDS:
+            return "No backoff configured"
+        return ", ".join(f"{delay:.1f}s" for delay in CONNECT_RETRY_BACKOFF_SECONDS)
+
+    def _derive_progress_hint(self, status_message: str) -> str:
+        """Mapuje status konektora na prosty komunikat dla użytkownika końcowego."""
+        normalized = status_message.lower()
+        if "retrying" in normalized:
+            return "Connection is being retried automatically."
+        if "fallback" in normalized:
+            return "Trying next known device from remembered list."
+        if "[error]" in normalized:
+            return "Connection failed. Verify headset fit and Bluetooth pairing."
+        if "[streaming]" in normalized or "connected to" in normalized:
+            return "Link stable. Streaming pipeline is active."
+        if "[scanning]" in normalized:
+            return "Scanning nearby BLE devices and remembered headbands."
+        if "[connecting]" in normalized:
+            return "Negotiating secure BLE session and discovering services."
+        return "Monitoring connection flow…"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
