@@ -301,6 +301,10 @@ class ScanScreen(Screen):
     def close_app(self) -> None:
         App.get_running_app().shutdown_app()
 
+    def go_to_raw_signals(self) -> None:
+        """Otwiera ekran podglądu surowych sygnałów z urządzenia."""
+        App.get_running_app().root.current = "raw_signals"
+
     def _format_retry_schedule(self) -> str:
         """Buduje czytelną listę opóźnień retry pokazywaną na ekranie."""
         if not CONNECT_RETRY_BACKOFF_SECONDS:
@@ -786,6 +790,48 @@ class GameScreen(Screen):
 
     def close_app(self) -> None:
         App.get_running_app().shutdown_app()
+
+
+class RawSignalsScreen(Screen):
+    """Ekran diagnostyczny prezentujący surowe ramki EEG/IMU/PPG."""
+
+    eeg_value = StringProperty("--")
+    imu_value = StringProperty("--")
+    ppg_value = StringProperty("--")
+    preview_status = StringProperty("Waiting for incoming frames…")
+    snapshot_time = StringProperty("--:--:--")
+    is_connected = BooleanProperty(False)
+
+    _refresh_event = None
+
+    def on_pre_enter(self, *_args) -> None:
+        # Uruchamiamy cykliczne odświeżanie dopiero podczas wejścia na ekran.
+        self._refresh_event = Clock.schedule_interval(self._refresh_snapshot, 0.2)
+        self._refresh_snapshot(0)
+
+    def on_leave(self, *_args) -> None:
+        # Sprzątamy scheduler, aby nie aktualizować UI poza aktywnym ekranem.
+        if self._refresh_event is not None:
+            self._refresh_event.cancel()
+            self._refresh_event = None
+
+    def _refresh_snapshot(self, _dt: float) -> None:
+        """Pobiera ostatnie próbki z cache aplikacji i odświeża widok."""
+        app = App.get_running_app()
+        snapshot = app.get_raw_sensor_snapshot()
+        self.eeg_value = snapshot.get("eeg", "--")
+        self.imu_value = snapshot.get("imu", "--")
+        self.ppg_value = snapshot.get("ppg", "--")
+        self.is_connected = bool(getattr(app.connector, "is_connected", False))
+        self.snapshot_time = datetime.now().strftime("%H:%M:%S")
+        if self.is_connected:
+            self.preview_status = "Live stream connected. Values update every 200 ms."
+        else:
+            self.preview_status = "Device offline. Displaying latest cached frames."
+
+    def go_back(self) -> None:
+        """Wraca do ekranu skanowania urządzeń."""
+        App.get_running_app().root.current = "scan"
 
     def open_user_guide(self) -> None:
         App.get_running_app().open_user_guide()
@@ -1423,6 +1469,7 @@ class NeuroGamingApp(App):
 
         sm = ScreenManager(transition=FadeTransition(duration=0.25))
         sm.add_widget(ScanScreen(name="scan"))
+        sm.add_widget(RawSignalsScreen(name="raw_signals"))
         sm.add_widget(GameScreen(name="game"))
         sm.add_widget(CalibrationScreen(name="calibration"))
         sm.add_widget(TestScreen(name="test"))
