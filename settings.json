@@ -1,0 +1,18 @@
+{
+  "beta_threshold": 2.0,
+  "alpha_threshold": 2.0,
+  "asym_factor": 1.3,
+  "hysteresis_count": 3,
+  "key_mode": "arrow",
+  "forwarding_enabled": false,
+  "debug_logging": false,
+  "debug_eeg_file": false,
+  "debug_logging_enabled": false,
+  "stream_eeg_enabled": false,
+  "stream_accelerometer_enabled": true,
+  "stream_gyroscope_enabled": true,
+  "stream_ppg_enabled": true,
+  "stream_battery_enabled": true,
+  "active_profile_id": "default",
+  "default_profile_id": "default"
+}
