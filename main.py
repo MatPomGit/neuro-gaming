@@ -34,6 +34,10 @@ import wave
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Wymuszamy provider audio SDL2, aby na Windows nie inicjalizować
+# gstplayer i nie emitować ostrzeżeń o brakujących DLL od GStreamera.
+os.environ.setdefault("KIVY_AUDIO", "sdl2")
+
 from kivy.animation import Animation
 from kivy.app import App
 from kivy.clock import Clock

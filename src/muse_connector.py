@@ -15,6 +15,7 @@ import asyncio
 import json
 import logging
 import os
+import inspect
 import struct
 import sys
 import threading
@@ -641,7 +642,7 @@ class MuseConnector:
         self._emit_status(status_message)
 
     async def _async_scan(self, timeout: float) -> None:
-        self._transition_state(ConnectionState.SCANNING, "Scanning for Muse devicesâ€¦")
+        self._transition_state(ConnectionState.SCANNING, "Scanning for Muse devices…")
         found: list[BLEDevice] = []
         devices = await BleakScanner.discover(timeout=timeout)
         for d in devices:
@@ -656,9 +657,19 @@ class MuseConnector:
         device_name = getattr(device, "name", "Muse") or "Muse"
         device_address = getattr(device, "address", str(device))
         self._manual_disconnect_requested = False
-        self._transition_state(ConnectionState.CONNECTING, f"Connecting to {device_name}â€¦")
-        # Use address instead of BLEDevice object for better stability on Windows
-        self._client = BleakClient(device_address)
+        self._transition_state(ConnectionState.CONNECTING, f"Connecting to {device_name}…")
+        # Na Windows prosimy backend WinRT o nieużywanie cache usług GATT.
+        # To ogranicza przypadki, w których pierwszy odczyt zwraca tylko część
+        # charakterystyk (bez kanałów EEG), mimo poprawnego połączenia.
+        client_kwargs: dict[str, object] = {}
+        if os.name == "nt":
+            client_kwargs["winrt"] = {"use_cached_services": False}
+        try:
+            # Używamy adresu zamiast obiektu BLEDevice dla większej stabilności.
+            self._client = BleakClient(device_address, **client_kwargs)
+        except TypeError:
+            # Fallback dla starszych wersji bleak bez argumentu `winrt`.
+            self._client = BleakClient(device_address)
         set_callback = getattr(self._client, "set_disconnected_callback", None)
         if callable(set_callback):
             callback_result = set_callback(self._on_client_disconnected)
@@ -816,7 +827,7 @@ class MuseConnector:
             # odświeża cache usług najbardziej niezawodnie.
             refresh_services = getattr(self._client, "get_services", None)
             if callable(refresh_services):
-                services = await refresh_services()
+                services = await self._call_services_refresh(refresh_services)
         except Exception as exc:
             logger.debug("Client get_services failed: %s", exc)
 
@@ -827,7 +838,7 @@ class MuseConnector:
                 backend = getattr(self._client, "_backend", None)
                 backend_refresh = getattr(backend, "get_services", None)
                 if callable(backend_refresh):
-                    services = await backend_refresh()
+                    services = await self._call_services_refresh(backend_refresh)
             except Exception as exc:
                 logger.debug("Backend get_services failed: %s", exc)
 
@@ -846,6 +857,31 @@ class MuseConnector:
                     uuids.append(str(uuid).lower())
         return uuids
 
+    async def _call_services_refresh(self, refresh_callable):
+        """Wywołuje odświeżanie usług z preferencją dla trybu uncached na Windows."""
+        if os.name != "nt":
+            return await refresh_callable()
+
+        # Część implementacji WinRT akceptuje `service_cache_mode` i/lub
+        # `cache_mode`. Sprawdzamy sygnaturę dynamicznie, by pozostać zgodnym
+        # z różnymi wersjami bleak/WinRT.
+        kwargs: dict[str, object] = {}
+        try:
+            signature = inspect.signature(refresh_callable)
+            if "service_cache_mode" in signature.parameters:
+                kwargs["service_cache_mode"] = "uncached"
+            if "cache_mode" in signature.parameters:
+                kwargs["cache_mode"] = "uncached"
+        except (TypeError, ValueError):
+            kwargs = {}
+
+        if kwargs:
+            try:
+                return await refresh_callable(**kwargs)
+            except TypeError:
+                logger.debug("Service refresh kwargs not supported; falling back to default call.")
+        return await refresh_callable()
+
     async def _async_auto_connect(self, timeout: float) -> bool:
         """Scan and connect to the first known device found."""
         known = self._store.addresses()
@@ -856,7 +892,7 @@ class MuseConnector:
         known_names = ", ".join(
             e["name"] or e["address"] for e in self._store.all()
         )
-        self._transition_state(ConnectionState.SCANNING, f"Searching for known device(s): {known_names}â€¦")
+        self._transition_state(ConnectionState.SCANNING, f"Searching for known device(s): {known_names}…")
         logger.info("Auto-connect: searching for known addresses %s", known)
 
         all_devices = await BleakScanner.discover(timeout=timeout)
