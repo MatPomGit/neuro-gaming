@@ -7,6 +7,7 @@ import json
 import os
 import threading
 import unittest.mock as mock
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
@@ -255,6 +256,64 @@ class TestAsyncAutoConnect:
 
         assert result is True
         mock_conn.assert_called_once_with(fake_device)
+
+
+class TestScanMuseDetection:
+    """Testy detekcji Muse podczas skanowania BLE."""
+
+    @staticmethod
+    def _run(coro):
+        return asyncio.get_event_loop().run_until_complete(coro)
+
+    def test_is_muse_candidate_matches_advertisement_local_name(self, tmp_path):
+        connector = MuseConnector(
+            on_eeg=lambda ch, s: None,
+            known_devices_path=str(tmp_path / "devices.json"),
+        )
+        fake_device = SimpleNamespace(name="", address="AA:BB:CC:DD:EE:FF")
+        fake_adv = SimpleNamespace(local_name="Muse-S-9ABC", service_uuids=[])
+
+        is_muse, reason = connector._is_muse_candidate(fake_device, fake_adv, known_addresses=set())
+
+        assert is_muse is True
+        assert reason == "advertisement local_name"
+
+    def test_is_muse_candidate_matches_muse_service_uuid(self, tmp_path):
+        connector = MuseConnector(
+            on_eeg=lambda ch, s: None,
+            known_devices_path=str(tmp_path / "devices.json"),
+        )
+        fake_device = SimpleNamespace(name="", address="AA:BB:CC:DD:EE:10")
+        fake_adv = SimpleNamespace(
+            local_name="",
+            service_uuids=["0000fe8d-0000-1000-8000-00805f9b34fb"],
+        )
+
+        is_muse, reason = connector._is_muse_candidate(fake_device, fake_adv, known_addresses=set())
+
+        assert is_muse is True
+        assert reason == "Muse service UUID"
+
+    def test_async_scan_uses_return_adv_dictionary_results(self, tmp_path):
+        connector = MuseConnector(
+            on_eeg=lambda ch, s: None,
+            known_devices_path=str(tmp_path / "devices.json"),
+        )
+        fake_muse = SimpleNamespace(name="", address="AA:BB:CC:DD:EE:01")
+        fake_tuya = SimpleNamespace(name="TUYA_Device", address="AA:BB:CC:DD:EE:02")
+        fake_muse_adv = SimpleNamespace(local_name="Muse-2A1B", service_uuids=[])
+        fake_tuya_adv = SimpleNamespace(local_name="TUYA_X", service_uuids=[])
+
+        discover_result = {
+            fake_muse.address: (fake_muse, fake_muse_adv),
+            fake_tuya.address: (fake_tuya, fake_tuya_adv),
+        }
+
+        with patch("src.muse_connector.BleakScanner.discover", new=AsyncMock(return_value=discover_result)):
+            self._run(connector._async_scan(timeout=1.0))
+
+        assert len(connector.devices) == 1
+        assert connector.devices[0].address == fake_muse.address
 
     def test_address_matching_is_case_insensitive(self, tmp_path):
         path = str(tmp_path / "devices.json")

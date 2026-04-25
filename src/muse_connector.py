@@ -641,15 +641,80 @@ class MuseConnector:
         )
         self._emit_status(status_message)
 
+    @staticmethod
+    def _is_muse_candidate(
+        device: BLEDevice,
+        advertisement_data,
+        known_addresses: set[str],
+    ) -> tuple[bool, str]:
+        """Sprawdza, czy urządzenie BLE wygląda na Muse.
+
+        Kryteria są celowo szerokie, bo na Windows `device.name` bywa puste.
+        Wtedy fallbackujemy do:
+        - `advertisement_data.local_name`,
+        - UUID usługi Muse (`FE8D`) z reklamy,
+        - adresu z listy wcześniej zapamiętanych urządzeń.
+        """
+        device_name = (getattr(device, "name", "") or "").strip()
+        adv_name = (getattr(advertisement_data, "local_name", "") or "").strip()
+        address = (getattr(device, "address", "") or "").upper()
+        service_uuids = {
+            str(uuid).lower()
+            for uuid in (getattr(advertisement_data, "service_uuids", None) or [])
+        }
+
+        if "muse" in device_name.lower():
+            return True, "device name"
+        if "muse" in adv_name.lower():
+            return True, "advertisement local_name"
+        if MUSE_SERVICE_UUID.lower() in service_uuids:
+            return True, "Muse service UUID"
+        if address and address in known_addresses:
+            return True, "known device address"
+        return False, "not Muse"
+
     async def _async_scan(self, timeout: float) -> None:
         self._transition_state(ConnectionState.SCANNING, "Scanning for Muse devices…")
-        found: list[BLEDevice] = []
-        devices = await BleakScanner.discover(timeout=timeout)
-        for d in devices:
-            name = d.name or ""
-            if "Muse" in name or "muse" in name:
-                found.append(d)
-                logger.info("Found Muse device: %s (%s)", d.name, d.address)
+        found_by_address: dict[str, BLEDevice] = {}
+        known_addresses = self._store.addresses()
+        try:
+            # Nowe wersje bleak potrafią zwrócić także advertisement_data.
+            # To kluczowe na Windows, gdy `device.name` bywa puste mimo
+            # poprawnie emitowanej nazwy lokalnej w reklamie BLE.
+            discovered = await BleakScanner.discover(timeout=timeout, return_adv=True)
+        except TypeError:
+            # Fallback dla starszych wersji bleak bez `return_adv`.
+            discovered = await BleakScanner.discover(timeout=timeout)
+
+        if isinstance(discovered, dict):
+            iterator = discovered.values()
+        else:
+            iterator = ((device, None) for device in discovered)
+
+        for entry in iterator:
+            if isinstance(entry, tuple) and len(entry) == 2:
+                device, advertisement_data = entry
+            else:
+                device, advertisement_data = entry, None
+
+            is_muse, reason = self._is_muse_candidate(device, advertisement_data, known_addresses)
+            if is_muse:
+                address = getattr(device, "address", "")
+                if address and address not in found_by_address:
+                    found_by_address[address] = device
+                    logger.info(
+                        "Found Muse candidate: %s (%s) via %s",
+                        getattr(device, "name", None),
+                        address,
+                        reason,
+                    )
+            else:
+                logger.debug(
+                    "Ignoring non-Muse BLE device: %s (%s)",
+                    getattr(device, "name", None),
+                    getattr(device, "address", None),
+                )
+        found = list(found_by_address.values())
         self.devices = found
         self._transition_state(ConnectionState.IDLE, f"Found {len(found)} Muse device(s)")
 
