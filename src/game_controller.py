@@ -245,7 +245,10 @@ class GameController:
         """Feed a new direction reading from the signal processor.
 
         Applies hysteresis: the direction must be seen
-        ``HYSTERESIS_COUNT`` times in a row before it is accepted.
+        ``self.hysteresis_count`` times in a row before it is accepted.
+
+        Wartość ``self.hysteresis_count`` jest konfigurowalna i może
+        zostać nadpisana przez ustawienia użytkownika.
         """
         if new_direction == self._pending_direction:
             self._pending_count += 1
