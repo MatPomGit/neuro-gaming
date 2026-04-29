@@ -615,6 +615,13 @@ class MuseConnector:
     def _run_loop(self) -> None:
         asyncio.set_event_loop(self._loop)
         self._loop.run_forever()
+        # Domknięcie pętli: anulujemy wszystkie pozostałe taski, aby uniknąć
+        # ostrzeżeń o "pending task" podczas kończenia procesu testowego.
+        pending = asyncio.all_tasks(self._loop)
+        for task in pending:
+            task.cancel()
+        if pending:
+            self._loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
 
     def _emit_status(self, message: str) -> None:
         """Emit a human-readable status message via the configured callback."""
@@ -999,10 +1006,7 @@ class MuseConnector:
         log_session: bool = True,
     ) -> None:
         self._manual_disconnect_requested = manual
-        if self._battery_task:
-            self._battery_task.cancel()
-            self._battery_task = None
-        self._cancel_watchdog()
+        await self._cancel_background_tasks()
         if self._client and self._client.is_connected:
             try:
                 await self._client.write_gatt_char(CONTROL_UUID, CMD_STOP)
@@ -1018,6 +1022,26 @@ class MuseConnector:
             self._log_session_metrics("disconnect")
         if report_state:
             self._transition_state(ConnectionState.IDLE, "Disconnected")
+
+    async def _cancel_background_tasks(self) -> None:
+        """Bezpiecznie anuluje zadania tła i czeka na ich domknięcie.
+
+        Dzięki temu pętla event loop nie kończy pracy z wiszącymi taskami,
+        co eliminuje ostrzeżenia typu "Task was destroyed but it is pending!".
+        """
+        tasks_to_cancel: list[asyncio.Task] = []
+        if self._battery_task:
+            tasks_to_cancel.append(self._battery_task)
+            self._battery_task = None
+        if self._watchdog_task:
+            tasks_to_cancel.append(self._watchdog_task)
+            self._watchdog_task = None
+
+        for task in tasks_to_cancel:
+            task.cancel()
+
+        if tasks_to_cancel:
+            await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
 
     def _make_eeg_handler(self, channel: str) -> Callable:
         """Return a BLE notification callback bound to *channel*."""
