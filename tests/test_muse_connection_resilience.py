@@ -103,14 +103,14 @@ class _FakeBleakClientWithBackendOnly:
 
 
 # [AI-CHANGE | 2026-04-18 07:38 UTC | v0.123]
-# CO ZMIENIONO: Dodano test regresyjny dla klienta bleak, ktory nie ma
+# CO ZMIENIONO: Dodano test regresyjny dla klienta bleak, który nie ma
 # publicznej metody `get_services`.
-# DLACZEGO: To dokladnie odtwarza zgloszony blad AttributeError i pilnuje,
-# aby konektor czytal cache uslug bez przerywania detekcji.
-# JAK TO DZIALA: Test podstawia klient bez `get_services`, ale z kompletnym
-# polem `services`, a nastepnie sprawdza, czy konektor zwraca UUID-y EEG.
-# TODO: Rozszerzyc test o scenariusz, w ktorym cache uslug pojawia sie dopiero
-# po kilku probach odczytu po zestawieniu polaczenia.
+# DLACZEGO: To dokładnie odtwarza zgłoszony błąd AttributeError i pilnuje,
+# aby konektor czytał cache usług bez przerywania detekcji.
+# JAK TO DZIAŁA: Test podstawia klient bez `get_services`, ale z kompletnym
+# polem `services`, a następnie sprawdza, czy konektor zwraca UUID-y EEG.
+# TODO: Rozszerzyć test o scenariusz, w którym cache usług pojawia się dopiero
+# po kilku próbach odczytu po zestawieniu połączenia.
 def test_collect_characteristic_uuids_supports_bleak_without_get_services():
     connector = MuseConnector(on_eeg=lambda _ch, _samples: None)
     connector._client = _FakeBleakClientWithoutGetServices("AA:BB")
@@ -132,7 +132,7 @@ def test_collect_characteristic_uuids_uses_backend_fallback():
 
 
 def test_watchdog_timeout_triggers_recovering_state(monkeypatch):
-    """Brak prĂłbek EEG powinien uruchomiÄ‡ Ĺ›cieĹĽkÄ™ RECOVERING."""
+    """Brak próbek EEG powinien uruchomić ścieżkę RECOVERING."""
     connector = MuseConnector(on_eeg=lambda _ch, _samples: None)
     connector._connected = True
     connector._watchdog_timeout_seconds = 0.1

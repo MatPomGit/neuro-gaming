@@ -76,3 +76,31 @@ def test_controller_and_processor_use_shared_settings_object():
     assert controller.hysteresis_count == 7
     assert controller.key_mode == "wasd"
     assert controller.forwarding_enabled is True
+
+
+@pytest.mark.parametrize(
+    "payload,expected",
+    [
+        ({"debug_logging_enabled": True, "debug_eeg_file": False}, True),
+        ({"debug_logging_enabled": False, "debug_eeg_file": True}, False),
+    ],
+)
+def test_settings_from_dict_prefers_new_debug_logging_enabled_field(payload, expected):
+    """Nowe pole debug_logging_enabled ma priorytet nad legacy debug_eeg_file."""
+    base_payload = AppSettings().to_dict()
+    base_payload.update(payload)
+
+    loaded = AppSettings.from_dict(base_payload)
+
+    assert loaded.debug_logging_enabled is expected
+
+
+def test_settings_from_dict_uses_default_when_debug_flags_missing():
+    """Brak pól debugowych powinien skutkować wartością domyślną."""
+    payload = AppSettings().to_dict()
+    payload.pop("debug_logging_enabled", None)
+    payload.pop("debug_eeg_file", None)
+
+    loaded = AppSettings.from_dict(payload)
+
+    assert loaded.debug_logging_enabled is AppSettings().debug_logging_enabled

@@ -70,7 +70,16 @@ class AppSettings:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "AppSettings":
+        if not isinstance(data, dict):
+            raise ValueError("Settings payload must be a dictionary")
+
         defaults = cls()
+        # Migracja legacy: nowe pole ma najwyższy priorytet, a stare
+        # debug_eeg_file działa wyłącznie jako fallback dla starych plików.
+        debug_logging_enabled = data.get("debug_logging_enabled")
+        if debug_logging_enabled is None:
+            debug_logging_enabled = data.get("debug_eeg_file", defaults.debug_logging_enabled)
+
         merged = {
             "beta_threshold": data.get("beta_threshold", defaults.beta_threshold),
             "alpha_threshold": data.get("alpha_threshold", defaults.alpha_threshold),
@@ -80,10 +89,7 @@ class AppSettings:
             "forwarding_enabled": data.get("forwarding_enabled", defaults.forwarding_enabled),
             "debug_logging": data.get("debug_logging", defaults.debug_logging),
             "debug_eeg_file": data.get("debug_eeg_file", defaults.debug_eeg_file),
-            "debug_logging_enabled": data.get(
-                "debug_logging_enabled",
-                data.get("debug_eeg_file", defaults.debug_logging_enabled),
-            ),
+            "debug_logging_enabled": debug_logging_enabled,
             "stream_eeg_enabled": data.get("stream_eeg_enabled", defaults.stream_eeg_enabled),
             "stream_accelerometer_enabled": data.get(
                 "stream_accelerometer_enabled", defaults.stream_accelerometer_enabled
