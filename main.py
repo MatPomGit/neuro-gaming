@@ -380,7 +380,7 @@ class GameScreen(Screen):
     _last_safety_signature = ""
 
     def on_enter(self, *args: object) -> None:
-        """Inicjuje ekran skanowania i uruchamia auto-skan po wejściu."""
+        """Inicjuje ekran gry, rejestruje zdarzenia klawiatury i uruchamia okresowe odświeżanie UI."""
         app = App.get_running_app()
         self.connected = app.connector.is_connected
         self._was_connected = self.connected
