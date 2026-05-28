@@ -144,7 +144,8 @@ class ScanScreen(Screen):
 
     _pulse_anim = None
 
-    def on_enter(self, *args):
+    def on_enter(self, *args: object) -> None:
+        """Inicjuje ekran skanowania i uruchamia auto-skan po wejściu."""
         app = App.get_running_app()
         app.connector.start()
         app.connector.set_status_callback(self._update_status)
@@ -173,7 +174,7 @@ class ScanScreen(Screen):
         # Run the blocking BLE scan on a background thread so the UI stays responsive
         threading.Thread(target=self._do_scan, args=(app,), daemon=True).start()
 
-    def _do_scan(self, app) -> None:  # noqa: ANN001
+    def _do_scan(self, app: "NeuroGamingApp") -> None:
         try:
             app.connector.scan(timeout=5.0)
             names = [
@@ -231,7 +232,7 @@ class ScanScreen(Screen):
             daemon=True
         ).start()
 
-    def _do_connect(self, app, device):
+    def _do_connect(self, app: "NeuroGamingApp", device: object) -> None:
         try:
             # MuseConnector.connect expects a BLEDevice object based on its signature, 
             # but inside it uses device.address for Windows stability.
@@ -378,7 +379,8 @@ class GameScreen(Screen):
     _was_connected = False
     _last_safety_signature = ""
 
-    def on_enter(self, *args):
+    def on_enter(self, *args: object) -> None:
+        """Inicjuje ekran gry, rejestruje zdarzenia klawiatury i uruchamia okresowe odświeżanie UI."""
         app = App.get_running_app()
         self.connected = app.connector.is_connected
         self._was_connected = self.connected
@@ -389,7 +391,8 @@ class GameScreen(Screen):
         Window.bind(on_key_down=self._on_key_down)
         Window.bind(on_key_up=self._on_key_up)
 
-    def on_leave(self, *args):
+    def on_leave(self, *args: object) -> None:
+        """Czyści powiązania zdarzeń po opuszczeniu ekranu gry."""
         if self._update_event:
             self._update_event.cancel()
         Window.unbind(on_key_down=self._on_key_down)
@@ -397,7 +400,7 @@ class GameScreen(Screen):
 
     # ── periodic UI update (100 ms) ────────────────────────────────────────
 
-    def _tick(self, dt) -> None:  # noqa: ANN001
+    def _tick(self, dt: float) -> None:
         app = App.get_running_app()
         self.connected = app.connector.is_connected
         if self.connected and not self._was_connected:
@@ -469,7 +472,7 @@ class GameScreen(Screen):
         if panel_name in {"control", "raw"}:
             self.active_panel = panel_name
 
-    def _update_raw_signals(self, app) -> None:  # noqa: ANN001
+    def _update_raw_signals(self, app: "NeuroGamingApp") -> None:
         """Buduje tekstowy podgląd najnowszych surowych ramek EEG/IMU/PPG."""
         snapshot = app.get_raw_sensor_snapshot()
         lines = [
@@ -480,7 +483,7 @@ class GameScreen(Screen):
         ]
         self.raw_signals_text = "\n".join(lines)
 
-    def _collect_session_health(self, app) -> SessionHealth:  # noqa: ANN001
+    def _collect_session_health(self, app: "NeuroGamingApp") -> SessionHealth:
         """Buduje agregat SessionHealth z telemetrii konektora i procesora."""
         state = app.connector.device_state
         battery = state.get("battery_level")
@@ -499,7 +502,7 @@ class GameScreen(Screen):
             dropout_rate=dropout_rate,
         )
 
-    def _apply_session_health(self, app, assessment) -> None:  # noqa: ANN001
+    def _apply_session_health(self, app: "NeuroGamingApp", assessment: SessionHealth) -> None:
         """Aktualizuje UI i akcje bezpieczeństwa na podstawie oceny ryzyka."""
         warnings = " | ".join(assessment.warnings) if assessment.warnings else "Brak alarmów."
         self.session_health_text = f"Session health: {assessment.status_label} ({warnings})"
@@ -519,7 +522,7 @@ class GameScreen(Screen):
 
         self._log_safety_state_if_changed(app, assessment)
 
-    def _log_safety_state_if_changed(self, app, assessment) -> None:  # noqa: ANN001
+    def _log_safety_state_if_changed(self, app: "NeuroGamingApp", assessment: SessionHealth) -> None:
         """Zapisuje zmiany stanu bezpieczeństwa bez duplikowania wpisów co tick."""
         signature = "|".join(
             [
@@ -545,7 +548,7 @@ class GameScreen(Screen):
             },
         )
 
-    def _update_bars(self, m: dict) -> None:
+    def _update_bars(self, m: dict[str, dict[str, float]]) -> None:
         """Normalise band powers to 0–1 for UI progress bars."""
         def _clamp(v: float) -> float:
             return max(0.0, min(1.0, abs(v) / 5.0))
@@ -555,7 +558,7 @@ class GameScreen(Screen):
         self.beta_left   = _clamp(m.get("AF7", {}).get("beta",  0.0))
         self.beta_right  = _clamp(m.get("AF8", {}).get("beta",  0.0))
 
-    def _update_device_status(self, app) -> None:  # noqa: ANN001
+    def _update_device_status(self, app: "NeuroGamingApp") -> None:
         if not app.connector.is_connected:
             self.device_text = "Device: keyboard mode"
             self.battery_text = "Battery: --"
@@ -612,7 +615,7 @@ class GameScreen(Screen):
 
     # ── keyboard input ─────────────────────────────────────────────────────
 
-    def _on_key_down(self, window, key, scancode, codepoint, modifiers) -> None:  # noqa: ANN001
+    def _on_key_down(self, window: object, key: int, scancode: int, codepoint: str, modifiers: list[str]) -> None:
         key_name = _keycode_to_name(key, codepoint)
         App.get_running_app().session_recorder.record_control_event(
             now_monotonic=time.monotonic(),
@@ -621,7 +624,7 @@ class GameScreen(Screen):
         )
         App.get_running_app().controller.handle_key_down(key_name)
 
-    def _on_key_up(self, window, key, *args) -> None:  # noqa: ANN001
+    def _on_key_up(self, window: object, key: int, *args: object) -> None:
         key_name = _keycode_to_name(key, "")
         App.get_running_app().session_recorder.record_control_event(
             now_monotonic=time.monotonic(),
@@ -808,12 +811,12 @@ class RawSignalsScreen(Screen):
 
     _refresh_event = None
 
-    def on_pre_enter(self, *_args) -> None:
+    def on_pre_enter(self, *_args: object) -> None:
         # Uruchamiamy cykliczne odświeżanie dopiero podczas wejścia na ekran.
         self._refresh_event = Clock.schedule_interval(self._refresh_snapshot, 0.2)
         self._refresh_snapshot(0)
 
-    def on_leave(self, *_args) -> None:
+    def on_leave(self, *_args: object) -> None:
         # Sprzątamy scheduler, aby nie aktualizować UI poza aktywnym ekranem.
         if self._refresh_event is not None:
             self._refresh_event.cancel()
@@ -881,7 +884,7 @@ class TestScreen(Screen):
     _replay_data: list[dict] = []
     _replay_index = 0
 
-    def on_enter(self, *args) -> None:
+    def on_enter(self, *args: object) -> None:
         self._keys_held: set[str] = set()
         Clock.schedule_once(self._init_dot_position, 0)
         Window.bind(on_key_down=self._on_key_down)
@@ -908,13 +911,13 @@ class TestScreen(Screen):
 
     # ── initialisation ─────────────────────────────────────────────────────
 
-    def _init_dot_position(self, dt) -> None:  # noqa: ANN001
+    def _init_dot_position(self, dt: float) -> None:
         self.dot_x = Window.width  / 2.0
         self.dot_y = Window.height / 2.0
 
     # ── movement tick ──────────────────────────────────────────────────────
 
-    def _tick(self, dt) -> None:  # noqa: ANN001
+    def _tick(self, dt: float) -> None:
         speed = DOT_SPEED * dt
         r = self.dot_radius
         keys = self._keys_held
@@ -929,12 +932,12 @@ class TestScreen(Screen):
 
     # ── keyboard input ─────────────────────────────────────────────────────
 
-    def _on_key_down(self, window, key, scancode, codepoint, modifiers) -> None:  # noqa: ANN001
+    def _on_key_down(self, window: object, key: int, scancode: int, codepoint: str, modifiers: list[str]) -> None:
         key_name = _keycode_to_name(key, codepoint)
         if key_name in ("up", "down", "left", "right", "w", "s", "a", "d"):
             self._keys_held.add(key_name)
 
-    def _on_key_up(self, window, key, *args) -> None:  # noqa: ANN001
+    def _on_key_up(self, window: object, key: int, *args: object) -> None:
         key_name = _keycode_to_name(key, "")
         self._keys_held.discard(key_name)
 
@@ -1155,7 +1158,7 @@ class CalibrationScreen(Screen):
     _tick_event = None
     _elapsed = 0.0
 
-    def on_enter(self, *args) -> None:
+    def on_enter(self, *args: object) -> None:
         self._tick_event = Clock.schedule_interval(self._tick, 0.25)
         # If arriving from game screen with active calibration, stop it cleanly
         if self.is_calibrating:
