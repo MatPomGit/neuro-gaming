@@ -1,1 +1,1 @@
-# NeuroGaming source package
+"""Pakiet źródłowy aplikacji NeuroGaming."""
