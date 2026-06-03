@@ -27,10 +27,11 @@ from collections.abc import Callable
 from concurrent.futures import Future
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Optional
+from typing import NotRequired, Optional, TypeAlias, TypedDict, cast
 
 import numpy as np
 from bleak import BleakClient, BleakScanner
+from bleak.backends.characteristic import BleakGATTCharacteristic
 from bleak.backends.device import BLEDevice
 from src.data_models import DeviceTelemetry, IMUFrame, PPGFrame
 
@@ -163,6 +164,44 @@ class ConnectionState(str, Enum):
     STREAMING = "STREAMING"
     RECOVERING = "RECOVERING"
     ERROR = "ERROR"
+
+
+BleakNotificationSource: TypeAlias = BleakGATTCharacteristic | int
+BleakNotificationPayload: TypeAlias = bytes | bytearray
+BleakNotificationCallback: TypeAlias = Callable[
+    [BleakNotificationSource, BleakNotificationPayload],
+    None,
+]
+
+
+class StreamActivity(TypedDict):
+    """AktywnoĹ›Ä‡ strumieni raportowana w stanie urzÄ…dzenia."""
+
+    eeg: bool
+    accelerometer: bool
+    gyroscope: bool
+    ppg: bool
+    battery: bool
+
+
+class DeviceState(TypedDict):
+    """Publiczny kontrakt stanu urzÄ…dzenia zwracanego przez ``device_state``."""
+
+    device_name: str
+    address: str
+    rssi: int | None
+    battery_level: int | None
+    sample_rate_hz: int
+    available_sensors: list[str]
+    streaming: bool
+    connection_state: str
+    reconnect_attempts: int
+    stream_activity: StreamActivity
+    motion_artifact: bool
+    signal_quality: dict[str, float]
+    global_quality_score: NotRequired[float]
+    session_quality_score: NotRequired[float]
+    processor_state: NotRequired[str]
 
 
 @dataclass(slots=True)
@@ -457,7 +496,7 @@ class MuseConnector:
         self._session_metrics = SessionMetrics()
         self._watchdog_timeout_seconds = STREAM_WATCHDOG_TIMEOUT_SECONDS
         self._reconnect_backoff_seconds = RECONNECT_BACKOFF_SECONDS
-        self._device_state = {
+        self._device_state: DeviceState = {
             "device_name": "Unknown",
             "address": "",
             "rssi": None,
@@ -553,9 +592,9 @@ class MuseConnector:
         return self._connected
 
     @property
-    def device_state(self) -> dict:
-        sensors = list(self._device_state.get("available_sensors", []))
-        return {**self._device_state, "available_sensors": sensors}
+    def device_state(self) -> DeviceState:
+        sensors = list(self._device_state["available_sensors"])
+        return cast(DeviceState, {**self._device_state, "available_sensors": sensors})
 
     @property
     def known_devices(self) -> list[dict[str, str]]:
@@ -1043,10 +1082,13 @@ class MuseConnector:
         if tasks_to_cancel:
             await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
 
-    def _make_eeg_handler(self, channel: str) -> Callable:
+    def _make_eeg_handler(self, channel: str) -> BleakNotificationCallback:
         """Return a BLE notification callback bound to *channel*."""
 
-        def handler(sender, data: bytearray) -> None:  # noqa: ANN001
+        def handler(
+            sender: BleakNotificationSource,
+            data: BleakNotificationPayload,
+        ) -> None:
             # Tylko aktywny strumieĹ„ EEG moĹĽe aktualizowaÄ‡ prĂłbki.
             if not self._device_state.get("streaming") or not self._stream_config.get("eeg", True):
                 return
@@ -1065,10 +1107,13 @@ class MuseConnector:
 
         return handler
 
-    def _make_imu_handler(self, sensor: str, scale: float) -> Callable:
+    def _make_imu_handler(self, sensor: str, scale: float) -> BleakNotificationCallback:
         """Buduje callback BLE dla pakietĂłw IMU."""
 
-        def handler(sender, data: bytearray) -> None:  # noqa: ANN001
+        def handler(
+            sender: BleakNotificationSource,
+            data: BleakNotificationPayload,
+        ) -> None:
             if not self._device_state.get("streaming") or not self._stream_config.get(sensor, True):
                 return
             try:
@@ -1088,10 +1133,13 @@ class MuseConnector:
 
         return handler
 
-    def _make_ppg_handler(self, channel: str) -> Callable:
+    def _make_ppg_handler(self, channel: str) -> BleakNotificationCallback:
         """Buduje callback BLE dla pakietĂłw PPG."""
 
-        def handler(sender, data: bytearray) -> None:  # noqa: ANN001
+        def handler(
+            sender: BleakNotificationSource,
+            data: BleakNotificationPayload,
+        ) -> None:
             if not self._device_state.get("streaming") or not self._stream_config.get("ppg", True):
                 return
             try:
@@ -1150,7 +1198,12 @@ class MuseConnector:
         self._emit_telemetry()
         return eeg_subscribed
 
-    async def _toggle_notify(self, uuid: str, handler: Callable, should_enable: bool) -> int:
+    async def _toggle_notify(
+        self,
+        uuid: str,
+        handler: BleakNotificationCallback,
+        should_enable: bool,
+    ) -> int:
         """Pomocniczo start/stop notyfikacji dla pojedynczej charakterystyki."""
         if self._client is None:
             return 0
