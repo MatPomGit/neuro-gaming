@@ -89,15 +89,17 @@ class AppSettings:
     def from_dict(cls, data: dict[str, Any]) -> "AppSettings":
         """Build settings from a dictionary, filling missing fields with defaults.
 
-        Missing keys are replaced with values from a default ``AppSettings``
-        instance. Older payloads that only contain ``debug_eeg_file`` are
+        Missing keys are replaced with values from a default 'AppSettings'
+        instance. Older payloads that only contain 'debug_eeg_file' are
         migrated by using that value as the fallback for
-        ``debug_logging_enabled``; an explicit ``debug_logging_enabled`` value
+        'debug_logging_enabled'; an explicit 'debug_logging_enabled' value
         takes precedence.
 
-        Raises:
-            ValueError: If ``data`` is not a dictionary or if the merged
-                settings fail validation.
+        Raises
+        ------
+        ValueError
+            If 'data' is not a dictionary or if the merged settings fail
+            validation.
         """
         if not isinstance(data, dict):
             raise ValueError("Settings payload must be a dictionary")
