@@ -56,9 +56,6 @@ from src.signal_processor import (
 if TYPE_CHECKING:
     from pynput.keyboard import Key as KeyboardKey  # type: ignore[import-not-found]
     from pynput.mouse import Button as MouseButton  # type: ignore[import-not-found]
-else:
-    KeyboardKey = object
-    MouseButton = object
 
 logger = logging.getLogger(__name__)
 
