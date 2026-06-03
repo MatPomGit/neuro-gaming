@@ -134,7 +134,7 @@ Lokalnie sprawdź styl docstringów oraz adnotacje typów przez Ruff:
 python -m ruff check main.py src
 ```
 
-Sprawdzenie typów modułów w `src/` uruchom przez mypy:
+Sprawdzenie typów w `src/` oraz `main.py` uruchom przez mypy:
 
 ```bash
 python -m mypy
