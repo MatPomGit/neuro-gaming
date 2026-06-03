@@ -161,7 +161,7 @@ class ScanScreen(Screen):
             Clock.schedule_once(lambda dt: self.scan(), 0.5)
 
     def scan(self) -> None:
-        """Uruchamia asynchroniczne skanowanie pobliskich urządzeń Muse."""
+        """Starts asynchronous scanning for nearby Muse devices."""
         if self.is_scanning:
             return
         app = App.get_running_app()
