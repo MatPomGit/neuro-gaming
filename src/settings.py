@@ -75,10 +75,12 @@ class AppSettings:
     def to_dict(self) -> dict[str, Any]:
         """Return validated settings as a JSON-compatible dictionary.
 
-        Raises:
-            ValueError: If any current setting fails validation. Defaults are
-                not substituted here; the instance must already contain valid
-                values before it can be serialized.
+        Raises
+        ------
+        ValueError
+            If any current setting fails validation. Defaults are not
+            substituted here; the instance must already contain valid
+            values before it can be serialized.
         """
         self.validate()
         return asdict(self)
