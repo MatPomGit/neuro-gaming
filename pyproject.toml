@@ -21,9 +21,73 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+  "mypy>=1.10",
   "pytest>=8.0",
+  "ruff>=0.5",
 ]
 
 [tool.pytest.ini_options]
 addopts = "-q"
 testpaths = ["tests"]
+
+
+[tool.ruff]
+target-version = "py311"
+src = ["src"]
+line-length = 88
+
+[tool.ruff.lint]
+select = ["D", "ANN"]
+ignore = [
+  "ANN401", # allow Any during gradual typing of dynamic BLE/Kivy data
+  "D102", # TODO: add public method docstrings incrementally
+  "D107", # TODO: add __init__ docstrings incrementally
+  "D202", # TODO: normalize existing docstring spacing
+  "D203", # incompatible with D211
+  "D205", # TODO: normalize existing multi-line docstrings
+  "D209", # TODO: normalize existing multi-line docstrings
+  "D212", # incompatible with D213
+  "D301", # TODO: update regex/backslash docstrings
+  "D401", # allow descriptive callback/docstring phrasing for now
+  "D413", # TODO: normalize existing section spacing
+  "D416", # TODO: normalize existing section headers
+  "D417", # TODO: complete existing argument descriptions
+]
+
+[tool.ruff.lint.per-file-ignores]
+"main.py" = [
+  "ANN001",
+  "ANN202",
+  "D101",
+  "D107",
+  "D401",
+]
+"src/muse_connector.py" = [
+  "ANN001",
+  "ANN202",
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.mypy]
+python_version = "3.11"
+files = ["src", "main.py"]
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_unused_configs = true
+pretty = true
+show_error_codes = true
+
+[[tool.mypy.overrides]]
+module = "src.single_instance"
+disable_error_code = ["attr-defined"]
+
+[[tool.mypy.overrides]]
+module = "src.game_controller"
+disable_error_code = ["union-attr"]
+
+[[tool.mypy.overrides]]
+module = "src.muse_connector"
+disable_error_code = ["arg-type", "assignment", "literal-required", "union-attr"]

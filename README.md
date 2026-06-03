@@ -119,6 +119,33 @@ pytest tests/ -v
 
 ---
 
+## Static checks
+
+Konfiguracja narzędzi statycznych znajduje się w `pyproject.toml`. Przed
+uruchomieniem sprawdzeń zainstaluj zależności deweloperskie:
+
+```bash
+pip install -e .[dev]
+```
+
+Lokalnie sprawdź styl docstringów oraz adnotacje typów przez Ruff:
+
+```bash
+python -m ruff check main.py src
+```
+
+Sprawdzenie typów w `src/` oraz `main.py` uruchom przez mypy:
+
+```bash
+python -m mypy
+```
+
+Wdrożenie jest stopniowe: konfiguracja zachowuje aktywne reguły docstringów
+(`D`) i adnotacji (`ANN`), ale tymczasowo wycisza znane obszary wymagające
+porządkowania, w tym dynamiczne callbacki Kivy w `main.py`.
+
+---
+
 ## Building the Android APK
 
 ### Locally (requires Linux)
