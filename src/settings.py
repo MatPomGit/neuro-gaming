@@ -166,14 +166,16 @@ def load_settings(path: Path | str = DEFAULT_SETTINGS_PATH) -> AppSettings:
 
 
 def save_settings(settings: AppSettings, path: Path | str = DEFAULT_SETTINGS_PATH) -> None:
-    """Validate and write settings to ``path`` as formatted JSON.
+    """Validate and write settings to 'path' as formatted JSON.
 
     This function never substitutes default settings; callers must pass the
-    exact ``AppSettings`` instance they want to persist. Parent directories are
+    exact 'AppSettings' instance they want to persist. Parent directories are
     created as needed before writing.
 
-    Raises:
-        ValueError: If ``settings`` fails validation before serialization.
+    Raises
+    ------
+    ValueError
+        If 'settings' fails validation before serialization.
     """
     settings.validate()
     file_path = Path(path)
