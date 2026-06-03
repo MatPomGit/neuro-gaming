@@ -42,7 +42,7 @@ no-op.
 
 import logging
 from collections.abc import Callable
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from src.settings import AppSettings
 from src.signal_processor import (
@@ -52,6 +52,10 @@ from src.signal_processor import (
     DIRECTION_NONE,
     DIRECTION_RIGHT,
 )
+
+if TYPE_CHECKING:
+    from pynput.keyboard import Key as KeyboardKey  # type: ignore[import-not-found]
+    from pynput.mouse import Button as MouseButton  # type: ignore[import-not-found]
 
 logger = logging.getLogger(__name__)
 
@@ -156,7 +160,7 @@ class ButtonForwarder:
 
     # ── private helpers ────────────────────────────────────────────────────
 
-    def _direction_to_key(self, direction: str, key_mode: str):
+    def _direction_to_key(self, direction: str, key_mode: str) -> KeyboardKey | str | None:
         """Return the pynput key object for *direction* and *key_mode*."""
         arrow, wasd = KEY_MAP.get(direction, ("", ""))
         raw = arrow if key_mode == "arrow" else wasd
@@ -166,7 +170,7 @@ class ButtonForwarder:
             return getattr(self._Key, raw)
         return raw  # single character (e.g. 'w', 'a', 's', 'd')
 
-    def _str_to_button(self, button: str):
+    def _str_to_button(self, button: str) -> MouseButton | None:
         """Return the pynput mouse Button for *button* name."""
         if button == MOUSE_LEFT:
             return self._Button.left
@@ -174,13 +178,13 @@ class ButtonForwarder:
             return self._Button.right
         return None
 
-    def _safe_press(self, key) -> None:
+    def _safe_press(self, key: KeyboardKey | MouseButton | str) -> None:
         try:
             self._keyboard.press(key)
         except Exception as exc:
             logger.warning("ButtonForwarder: key press failed: %s", exc)
 
-    def _safe_release(self, key) -> None:
+    def _safe_release(self, key: KeyboardKey | MouseButton | str) -> None:
         try:
             self._keyboard.release(key)
         except Exception as exc:
