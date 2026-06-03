@@ -33,6 +33,7 @@ import threading
 import wave
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, Sequence, TYPE_CHECKING
 
 # Wymuszamy provider audio SDL2, aby na Windows nie inicjalizować
 # gstplayer i nie emitować ostrzeżeń o brakujących DLL od GStreamera.
@@ -59,6 +60,9 @@ from kivy.uix.screenmanager import FadeTransition, Screen, ScreenManager
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.switch import Switch
 from kivy.uix.textinput import TextInput
+
+if TYPE_CHECKING:
+    from kivy.input.motionevent import MotionEvent
 
 from src.game_controller import GameController
 from src.muse_connector import (
@@ -157,6 +161,7 @@ class ScanScreen(Screen):
             Clock.schedule_once(lambda dt: self.scan(), 0.5)
 
     def scan(self) -> None:
+        """Starts asynchronous scanning for nearby Muse devices."""
         if self.is_scanning:
             return
         app = App.get_running_app()
@@ -191,7 +196,7 @@ class ScanScreen(Screen):
             status = f"Scan error: {exc}"
         Clock.schedule_once(lambda dt: self._scan_done(device_names, status))
 
-    def _scan_done(self, device_names: list, status: str) -> None:
+    def _scan_done(self, device_names: list[str], status: str) -> None:
         if self._pulse_anim:
             self._pulse_anim.stop(self)
             self._pulse_anim = None
@@ -214,6 +219,7 @@ class ScanScreen(Screen):
         self.scan_pulse = 1.0
 
     def connect_device(self, index: int) -> None:
+        """Rozpoczyna połączenie z urządzeniem wybranym z listy skanowania."""
         app = App.get_running_app()
         devices = app.connector.devices
         if index < 0 or index >= len(devices):
@@ -270,6 +276,7 @@ class ScanScreen(Screen):
         App.get_running_app().root.current = "breath_module"
 
     def open_user_guide(self) -> None:
+        """Otwiera skróconą instrukcję obsługi aplikacji."""
         App.get_running_app().open_user_guide()
 
     def _update_status(self, msg: str) -> None:
@@ -287,7 +294,8 @@ class ScanScreen(Screen):
             self.fsm_state = "ERROR"
         self._update_fsm_color()
 
-    def on_fsm_state(self, *_args) -> None:
+    def on_fsm_state(self, *_args: object) -> None:
+        """Aktualizuje kolor wskaźnika po zmianie stanu FSM."""
         # Synchronizujemy kolor statusu po każdej zmianie stanu FSM.
         self._update_fsm_color()
 
@@ -304,6 +312,7 @@ class ScanScreen(Screen):
         self.fsm_color = palette.get(self.fsm_state, palette["IDLE"])
 
     def close_app(self) -> None:
+        """Zamyka aplikację z poziomu ekranu skanowania."""
         App.get_running_app().shutdown_app()
 
     def go_to_raw_signals(self) -> None:
@@ -640,6 +649,7 @@ class GameScreen(Screen):
         App.get_running_app().root.current = "calibration"
 
     def toggle_key_mode(self) -> None:
+        """Przełącza mapowanie klawiszy między trybem strzałek i WASD."""
         app = App.get_running_app()
         app.controller.key_mode = (
             "wasd" if app.controller.key_mode == "arrow" else "arrow"
@@ -649,6 +659,7 @@ class GameScreen(Screen):
         self.key_mode = app.controller.key_mode
 
     def open_settings_popup(self) -> None:
+        """Wyświetla okno konfiguracji progów, strumieni i profilu użytkownika."""
         app = App.get_running_app()
         settings = app.settings
         root = BoxLayout(orientation="vertical", spacing=8, padding=12)
@@ -787,6 +798,7 @@ class GameScreen(Screen):
         popup.dismiss()
 
     def disconnect(self) -> None:
+        """Rozłącza aktywne urządzenie i wraca do ekranu skanowania."""
         app = App.get_running_app()
         app.connector.disconnect()
         app.processor.reset()
@@ -796,6 +808,7 @@ class GameScreen(Screen):
         app.root.current = "scan"
 
     def close_app(self) -> None:
+        """Zamyka aplikację z poziomu ekranu gry."""
         App.get_running_app().shutdown_app()
 
 
@@ -812,11 +825,13 @@ class RawSignalsScreen(Screen):
     _refresh_event = None
 
     def on_pre_enter(self, *_args: object) -> None:
+        """Uruchamia cykliczne odświeżanie widoku surowych sygnałów."""
         # Uruchamiamy cykliczne odświeżanie dopiero podczas wejścia na ekran.
         self._refresh_event = Clock.schedule_interval(self._refresh_snapshot, 0.2)
         self._refresh_snapshot(0)
 
     def on_leave(self, *_args: object) -> None:
+        """Zatrzymuje odświeżanie po opuszczeniu ekranu surowych danych."""
         # Sprzątamy scheduler, aby nie aktualizować UI poza aktywnym ekranem.
         if self._refresh_event is not None:
             self._refresh_event.cancel()
@@ -841,6 +856,7 @@ class RawSignalsScreen(Screen):
         App.get_running_app().root.current = "scan"
 
     def open_user_guide(self) -> None:
+        """Otwiera instrukcję obsługi z ekranu surowych danych."""
         App.get_running_app().open_user_guide()
 
     def go_to_main_menu(self) -> None:
@@ -885,6 +901,7 @@ class TestScreen(Screen):
     _replay_index = 0
 
     def on_enter(self, *args: object) -> None:
+        """Przygotowuje obsługę klawiatury, myszy i rejestratora dla testu."""
         self._keys_held: set[str] = set()
         Clock.schedule_once(self._init_dot_position, 0)
         Window.bind(on_key_down=self._on_key_down)
@@ -892,7 +909,8 @@ class TestScreen(Screen):
         self._update_event = Clock.schedule_interval(self._tick, 1.0 / 60)
         self._recorder_event = Clock.schedule_interval(self._refresh_recorder_status, 0.25)
 
-    def on_leave(self, *args) -> None:
+    def on_leave(self, *args: object) -> None:
+        """Czyści zdarzenia i stan sterowania po opuszczeniu ekranu testowego."""
         if self._update_event:
             self._update_event.cancel()
             self._update_event = None
@@ -943,7 +961,8 @@ class TestScreen(Screen):
 
     # ── mouse input ────────────────────────────────────────────────────────
 
-    def on_touch_down(self, touch):
+    def on_touch_down(self, touch: "MotionEvent") -> bool:
+        """Obsługuje kliknięcia myszy przed przekazaniem ich do kontrolera gry."""
         # Propagate first so child buttons (e.g. Back) handle their own clicks
         if super().on_touch_down(touch):
             return True
@@ -954,7 +973,8 @@ class TestScreen(Screen):
             self._handle_right_click(touch)
         return True
 
-    def on_touch_up(self, touch):
+    def on_touch_up(self, touch: "MotionEvent") -> bool:
+        """Zwalnia stan przycisków myszy używany przez ekran testowy."""
         button = getattr(touch, "button", None)
         if button == "left":
             self.left_active = False
@@ -1159,12 +1179,14 @@ class CalibrationScreen(Screen):
     _elapsed = 0.0
 
     def on_enter(self, *args: object) -> None:
+        """Uruchamia odświeżanie jakości sygnału dla kreatora kalibracji."""
         self._tick_event = Clock.schedule_interval(self._tick, 0.25)
         # If arriving from game screen with active calibration, stop it cleanly
         if self.is_calibrating:
             self._finish_calibration()
 
-    def on_leave(self, *args) -> None:
+    def on_leave(self, *args: object) -> None:
+        """Zatrzymuje odświeżanie i kończy aktywną kalibrację przy wyjściu."""
         if self._tick_event:
             self._tick_event.cancel()
             self._tick_event = None
@@ -1377,7 +1399,7 @@ class NeuroGamingApp(App):
     version = StringProperty(__version__)
     console_output = StringProperty("")
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs: Any) -> None:
         self._instance_lock = kwargs.pop("instance_lock", None)
         self._replay_path = kwargs.pop("replay_path", None)
         super().__init__(**kwargs)
@@ -1399,7 +1421,8 @@ class NeuroGamingApp(App):
         self.safe_pause_active = False
         self.keyboard_fallback_forced = False
 
-    def build(self):
+    def build(self) -> ScreenManager:
+        """Buduje główny ScreenManager i inicjuje współdzielone usługi aplikacji."""
         try:
             self.settings = load_settings()
         except Exception as exc:
@@ -1495,18 +1518,20 @@ class NeuroGamingApp(App):
             return dict(self._raw_sensor_values)
 
     @staticmethod
-    def _format_vector(values, limit: int = 5) -> str:  # noqa: ANN001
+    def _format_vector(values: Sequence[float], limit: int = 5) -> str:
         """Formatuje wektor próbek do krótkiej postaci tekstowej dla UI."""
         normalized = [float(v) for v in values[:limit]]
         return "[" + ", ".join(f"{v:.2f}" for v in normalized) + "]"
 
-    def on_stop(self):
+    def on_stop(self) -> None:
+        """Zwalnia zasoby konektora i blokadę pojedynczej instancji przy zamykaniu."""
         logging.getLogger().removeHandler(self._log_handler)
         self.connector.stop()
         release_lock(self._instance_lock)
 
     def add_console_line(self, line: str) -> None:
-        def _append(*_args):
+        """Dopisuje linię do konsoli UI w bezpieczny dla wątku GUI sposób."""
+        def _append(*_args: object) -> None:
             self._log_lines.append(line)
             if len(self._log_lines) > self._max_log_lines:
                 self._log_lines = self._log_lines[-self._max_log_lines:]
@@ -1514,6 +1539,7 @@ class NeuroGamingApp(App):
         Clock.schedule_once(_append, 0)
 
     def shutdown_app(self) -> None:
+        """Rozłącza urządzenie i prosi Kivy o zakończenie aplikacji."""
         logger.info("Closing application requested by user.")
         try:
             self.connector.disconnect()
@@ -1522,6 +1548,7 @@ class NeuroGamingApp(App):
         self.stop()
 
     def apply_settings(self) -> None:
+        """Stosuje aktualne ustawienia do procesora, kontrolera i konektora."""
         loaded_profile = None
         if self.processor.profile_store.exists(self.settings.active_profile_id):
             loaded_profile = self.processor.profile_store.load(self.settings.active_profile_id)
@@ -1541,6 +1568,7 @@ class NeuroGamingApp(App):
         })
 
     def persist_settings(self) -> None:
+        """Zapisuje ustawienia aplikacji, logując ewentualny błąd zapisu."""
         try:
             save_settings(self.settings)
         except Exception as exc:
@@ -1574,12 +1602,14 @@ class NeuroGamingApp(App):
                 wav_file.writeframes(struct.pack("<h", value))
 
     def play_found_sound(self) -> None:
+        """Odtwarza krótki sygnał wykrycia urządzenia."""
         sound = self._sounds.get("found")
         if sound:
             sound.stop()
             sound.play()
 
     def play_connected_sound(self) -> None:
+        """Odtwarza potwierdzenie udanego połączenia z urządzeniem."""
         sound = self._sounds.get("connect")
         if not sound:
             return
@@ -1588,6 +1618,7 @@ class NeuroGamingApp(App):
         Clock.schedule_once(lambda *_: sound.play(), 0.18)
 
     def open_user_guide(self) -> None:
+        """Pokazuje modalną instrukcję pierwszego uruchomienia i obsługi sesji."""
         guide_text = (
             "SYSTEM OPERATIONAL GUIDE\n\n"
             "1) Power on the Muse S headband and ensure all sensors have "
