@@ -72,7 +72,7 @@ convention = "google"
 
 [tool.mypy]
 python_version = "3.11"
-files = ["src"]
+files = ["src", "main.py"]
 ignore_missing_imports = true
 warn_unused_ignores = false
 warn_redundant_casts = true
