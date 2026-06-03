@@ -12,6 +12,14 @@ DEFAULT_SETTINGS_PATH = Path("settings.json")
 
 @dataclass
 class AppSettings:
+    """Validated application settings model persisted as JSON.
+
+    Instances hold the application configuration used by the runtime and
+    persistence helpers. Use :meth:`from_dict` or :func:`load_settings` to
+    construct settings from stored JSON-compatible data, and :meth:`to_dict`
+    or :func:`save_settings` to serialize a validated model back to JSON.
+    """
+
     beta_threshold: float = 2.0
     alpha_threshold: float = 2.0
     asym_factor: float = 1.3
@@ -65,11 +73,30 @@ class AppSettings:
             raise ValueError("default_profile_id must be a non-empty string")
 
     def to_dict(self) -> dict[str, Any]:
+        """Return validated settings as a JSON-compatible dictionary.
+
+        Raises:
+            ValueError: If any current setting fails validation. Defaults are
+                not substituted here; the instance must already contain valid
+                values before it can be serialized.
+        """
         self.validate()
         return asdict(self)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "AppSettings":
+        """Build settings from a dictionary, filling missing fields with defaults.
+
+        Missing keys are replaced with values from a default ``AppSettings``
+        instance. Older payloads that only contain ``debug_eeg_file`` are
+        migrated by using that value as the fallback for
+        ``debug_logging_enabled``; an explicit ``debug_logging_enabled`` value
+        takes precedence.
+
+        Raises:
+            ValueError: If ``data`` is not a dictionary or if the merged
+                settings fail validation.
+        """
         if not isinstance(data, dict):
             raise ValueError("Settings payload must be a dictionary")
 
@@ -110,6 +137,18 @@ class AppSettings:
 
 
 def load_settings(path: Path | str = DEFAULT_SETTINGS_PATH) -> AppSettings:
+    """Load settings from JSON, or return defaults when the file is absent.
+
+    Default ``AppSettings`` are returned only when ``path`` does not exist.
+    Existing JSON files are parsed and merged with field defaults by
+    ``AppSettings.from_dict``.
+
+    Raises:
+        ValueError: If the JSON root is not an object, if the parsed payload is
+            not a valid settings dictionary, or if merged settings fail
+            validation.
+        json.JSONDecodeError: If the file contents are not valid JSON.
+    """
     file_path = Path(path)
     if not file_path.exists():
         return AppSettings()
@@ -120,6 +159,15 @@ def load_settings(path: Path | str = DEFAULT_SETTINGS_PATH) -> AppSettings:
 
 
 def save_settings(settings: AppSettings, path: Path | str = DEFAULT_SETTINGS_PATH) -> None:
+    """Validate and write settings to ``path`` as formatted JSON.
+
+    This function never substitutes default settings; callers must pass the
+    exact ``AppSettings`` instance they want to persist. Parent directories are
+    created as needed before writing.
+
+    Raises:
+        ValueError: If ``settings`` fails validation before serialization.
+    """
     settings.validate()
     file_path = Path(path)
     file_path.parent.mkdir(parents=True, exist_ok=True)
