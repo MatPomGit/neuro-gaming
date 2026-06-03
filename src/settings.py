@@ -143,15 +143,18 @@ class AppSettings:
 def load_settings(path: Path | str = DEFAULT_SETTINGS_PATH) -> AppSettings:
     """Load settings from JSON, or return defaults when the file is absent.
 
-    Default ``AppSettings`` are returned only when ``path`` does not exist.
+    Default 'AppSettings' are returned only when 'path' does not exist.
     Existing JSON files are parsed and merged with field defaults by
-    ``AppSettings.from_dict``.
+    'AppSettings.from_dict'.
 
-    Raises:
-        ValueError: If the JSON root is not an object, if the parsed payload is
-            not a valid settings dictionary, or if merged settings fail
-            validation.
-        json.JSONDecodeError: If the file contents are not valid JSON.
+    Raises
+    ------
+    ValueError
+        If the JSON root is not an object, if the parsed payload is
+        not a valid settings dictionary, or if merged settings fail
+        validation.
+    json.JSONDecodeError
+        If the file contents are not valid JSON.
     """
     file_path = Path(path)
     if not file_path.exists():
