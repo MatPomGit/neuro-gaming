@@ -1,0 +1,31 @@
+# Normalize text files by default and keep repo diffs stable
+* text=auto eol=lf
+
+# Keep Windows scripts executable and readable on Windows
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Explicit UTF-8 handling for source and config files
+*.py text working-tree-encoding=UTF-8
+*.kv text working-tree-encoding=UTF-8
+*.md text working-tree-encoding=UTF-8
+*.toml text working-tree-encoding=UTF-8
+*.json text working-tree-encoding=UTF-8
+*.yml text working-tree-encoding=UTF-8
+*.yaml text working-tree-encoding=UTF-8
+*.spec text working-tree-encoding=UTF-8
+*.txt text working-tree-encoding=UTF-8
+
+# Common binary assets
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.wav binary
+*.mp3 binary
+*.zip binary
+*.7z binary
+*.pdf binary
