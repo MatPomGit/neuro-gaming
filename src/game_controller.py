@@ -40,6 +40,8 @@ is not available (e.g. on Android), forwarding silently degrades to a
 no-op.
 """
 
+from __future__ import annotations
+
 import logging
 from collections.abc import Callable
 from typing import Optional, TYPE_CHECKING

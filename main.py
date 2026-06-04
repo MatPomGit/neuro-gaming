@@ -1,3 +1,5 @@
+﻿# pyright: reportMissingImports=false
+
 """
 NeuroGaming – main Kivy application entry point.
 
@@ -33,7 +35,7 @@ import threading
 import wave
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Sequence, TYPE_CHECKING
+from typing import Any, Sequence, TYPE_CHECKING, cast
 
 # Wymuszamy provider audio SDL2, aby na Windows nie inicjalizować
 # gstplayer i nie emitować ostrzeżeń o brakujących DLL od GStreamera.
@@ -63,6 +65,7 @@ from kivy.uix.textinput import TextInput
 
 if TYPE_CHECKING:
     from kivy.input.motionevent import MotionEvent
+    from bleak.backends.device import BLEDevice
 
 from src.game_controller import GameController
 from src.muse_connector import (
@@ -74,7 +77,7 @@ from src.settings import AppSettings, load_settings, save_settings
 from src.single_instance import acquire_lock, release_lock
 from src.session_recorder import SessionRecorder
 from src.session_replay import ReplayConnector, SessionReplay
-from src.session_health import SessionHealth, SessionHealthMonitor
+from src.session_health import SessionHealth, SessionHealthAssessment, SessionHealthMonitor
 from src.signal_processor import (
     DIRECTION_BACKWARD,
     DIRECTION_FORWARD,
@@ -91,7 +94,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 
 # Dot movement speed in pixels per second
 DOT_SPEED = 200
@@ -104,6 +107,18 @@ _DIR_LABELS: dict[str, str] = {
     DIRECTION_LEFT:     "Left",
     DIRECTION_RIGHT:    "Right",
 }
+
+
+def _running_app() -> "NeuroGamingApp":
+    """Return the active app instance as NeuroGamingApp.
+
+    Kivy's App.get_running_app() is typed as Optional[App], but in event
+    handlers we only proceed when the app is already bootstrapped.
+    """
+    app = App.get_running_app()
+    if app is None:
+        raise RuntimeError("NeuroGamingApp is not running")
+    return cast("NeuroGamingApp", app)
 
 
 class _UILogHandler(logging.Handler):
@@ -150,7 +165,7 @@ class ScanScreen(Screen):
 
     def on_enter(self, *args: object) -> None:
         """Inicjuje ekran skanowania i uruchamia auto-skan po wejściu."""
-        app = App.get_running_app()
+        app = _running_app()
         app.connector.start()
         app.connector.set_status_callback(self._update_status)
         # Pokazujemy użytkownikowi aktualne parametry retry przy wejściu na ekran.
@@ -164,7 +179,7 @@ class ScanScreen(Screen):
         """Starts asynchronous scanning for nearby Muse devices."""
         if self.is_scanning:
             return
-        app = App.get_running_app()
+        app = _running_app()
         self.status_text = "Scanning…"
         self.fsm_state = "SCANNING"
         self.device_names = []
@@ -202,11 +217,11 @@ class ScanScreen(Screen):
             self._pulse_anim = None
         self.device_names = device_names
         # Liczymy tylko realnie wykryte urządzenia, bez placeholdera.
-        self.found_devices_count = len(App.get_running_app().connector.devices)
+        self.found_devices_count = len(_running_app().connector.devices)
         self.status_text = status
         self.is_scanning = False
         self.fsm_state = "FOUND" if device_names and device_names[0] != "No Muse devices found." else "IDLE"
-        app = App.get_running_app()
+        app = _running_app()
         if app:
             if device_names and device_names[0] != "No Muse devices found.":
                 app.play_found_sound()
@@ -220,7 +235,7 @@ class ScanScreen(Screen):
 
     def connect_device(self, index: int) -> None:
         """Rozpoczyna połączenie z urządzeniem wybranym z listy skanowania."""
-        app = App.get_running_app()
+        app = _running_app()
         devices = app.connector.devices
         if index < 0 or index >= len(devices):
             self.status_text = "Invalid device selection."
@@ -238,7 +253,7 @@ class ScanScreen(Screen):
             daemon=True
         ).start()
 
-    def _do_connect(self, app: "NeuroGamingApp", device: object) -> None:
+    def _do_connect(self, app: "NeuroGamingApp", device: "BLEDevice") -> None:
         try:
             # MuseConnector.connect expects a BLEDevice object based on its signature, 
             # but inside it uses device.address for Windows stability.
@@ -251,7 +266,7 @@ class ScanScreen(Screen):
     def _connect_done(self, success: bool, error_msg: str = "") -> None:
         self.is_scanning = False
         if success:
-            app = App.get_running_app()
+            app = _running_app()
             self.fsm_state = "CONNECTED"
             app.play_connected_sound()
             app.root.current = "game"
@@ -261,23 +276,23 @@ class ScanScreen(Screen):
 
     def skip_to_keyboard(self) -> None:
         """Continue in keyboard-only mode (no Muse required)."""
-        App.get_running_app().root.current = "game"
+        _running_app().root.current = "game"
 
     def go_to_test(self) -> None:
         """Open the interactive test screen."""
-        App.get_running_app().root.current = "test"
+        _running_app().root.current = "test"
 
     def go_to_focus_module(self) -> None:
         """Otwiera moduł treningu koncentracji."""
-        App.get_running_app().root.current = "focus_module"
+        _running_app().root.current = "focus_module"
 
     def go_to_breath_module(self) -> None:
         """Otwiera moduł ćwiczeń oddechowych."""
-        App.get_running_app().root.current = "breath_module"
+        _running_app().root.current = "breath_module"
 
     def open_user_guide(self) -> None:
         """Otwiera skróconą instrukcję obsługi aplikacji."""
-        App.get_running_app().open_user_guide()
+        _running_app().open_user_guide()
 
     def _update_status(self, msg: str) -> None:
         self.status_text = msg
@@ -313,11 +328,11 @@ class ScanScreen(Screen):
 
     def close_app(self) -> None:
         """Zamyka aplikację z poziomu ekranu skanowania."""
-        App.get_running_app().shutdown_app()
+        _running_app().shutdown_app()
 
     def go_to_raw_signals(self) -> None:
         """Otwiera ekran podglądu surowych sygnałów z urządzenia."""
-        App.get_running_app().root.current = "raw_signals"
+        _running_app().root.current = "raw_signals"
 
     def _format_retry_schedule(self) -> str:
         """Buduje czytelną listę opóźnień retry pokazywaną na ekranie."""
@@ -326,7 +341,7 @@ class ScanScreen(Screen):
         return ", ".join(f"{delay:.1f}s" for delay in CONNECT_RETRY_BACKOFF_SECONDS)
 
     def _derive_progress_hint(self, status_message: str) -> str:
-        """Mapuje status konektora na prosty komunikat dla użytkownika końcowego."""
+        """Mapuje status konektora na prosty komunikat dla uLLytkownika końcowego."""
         normalized = status_message.lower()
         if "retrying" in normalized:
             return "Connection is being retried automatically."
@@ -390,7 +405,7 @@ class GameScreen(Screen):
 
     def on_enter(self, *args: object) -> None:
         """Inicjuje ekran gry, rejestruje zdarzenia klawiatury i uruchamia okresowe odświeżanie UI."""
-        app = App.get_running_app()
+        app = _running_app()
         self.connected = app.connector.is_connected
         self._was_connected = self.connected
         self._last_safety_signature = ""
@@ -410,7 +425,7 @@ class GameScreen(Screen):
     # ── periodic UI update (100 ms) ────────────────────────────────────────
 
     def _tick(self, dt: float) -> None:
-        app = App.get_running_app()
+        app = _running_app()
         self.connected = app.connector.is_connected
         if self.connected and not self._was_connected:
             # Warm-up po reconnect minimalizuje fałszywe komendy na starcie streamu.
@@ -432,17 +447,23 @@ class GameScreen(Screen):
 
             # Refresh per-channel signal quality
             quality_snapshot = app.processor.get_quality_snapshot()
-            sq = quality_snapshot.get("channels", {})
+            channels_raw = quality_snapshot.get("channels", {})
+            sq = channels_raw if isinstance(channels_raw, dict) else {}
             self.quality_tp9  = float(sq.get("TP9",  0.0))
             self.quality_af7  = float(sq.get("AF7",  0.0))
             self.quality_af8  = float(sq.get("AF8",  0.0))
             self.quality_tp10 = float(sq.get("TP10", 0.0))
             app.connector._device_state["signal_quality"] = dict(sq)
+
+            global_score_raw = quality_snapshot.get("global_score", 0.0)
+            session_score_raw = quality_snapshot.get("session_score", 0.0)
+            global_score = float(global_score_raw) if isinstance(global_score_raw, (int, float)) else 0.0
+            session_score = float(session_score_raw) if isinstance(session_score_raw, (int, float)) else 0.0
             app.connector._device_state["global_quality_score"] = float(
-                quality_snapshot.get("global_score", 0.0)
+                global_score
             )
             app.connector._device_state["session_quality_score"] = float(
-                quality_snapshot.get("session_score", 0.0)
+                session_score
             )
             app.connector._device_state["processor_state"] = str(
                 quality_snapshot.get("state", "UNKNOWN")
@@ -511,7 +532,7 @@ class GameScreen(Screen):
             dropout_rate=dropout_rate,
         )
 
-    def _apply_session_health(self, app: "NeuroGamingApp", assessment: SessionHealth) -> None:
+    def _apply_session_health(self, app: "NeuroGamingApp", assessment: SessionHealthAssessment) -> None:
         """Aktualizuje UI i akcje bezpieczeństwa na podstawie oceny ryzyka."""
         warnings = " | ".join(assessment.warnings) if assessment.warnings else "Brak alarmów."
         self.session_health_text = f"Session health: {assessment.status_label} ({warnings})"
@@ -531,7 +552,7 @@ class GameScreen(Screen):
 
         self._log_safety_state_if_changed(app, assessment)
 
-    def _log_safety_state_if_changed(self, app: "NeuroGamingApp", assessment: SessionHealth) -> None:
+    def _log_safety_state_if_changed(self, app: "NeuroGamingApp", assessment: SessionHealthAssessment) -> None:
         """Zapisuje zmiany stanu bezpieczeństwa bez duplikowania wpisów co tick."""
         signature = "|".join(
             [
@@ -626,31 +647,31 @@ class GameScreen(Screen):
 
     def _on_key_down(self, window: object, key: int, scancode: int, codepoint: str, modifiers: list[str]) -> None:
         key_name = _keycode_to_name(key, codepoint)
-        App.get_running_app().session_recorder.record_control_event(
+        _running_app().session_recorder.record_control_event(
             now_monotonic=time.monotonic(),
             event_name="key_down",
             payload={"key": key_name},
         )
-        App.get_running_app().controller.handle_key_down(key_name)
+        _running_app().controller.handle_key_down(key_name)
 
     def _on_key_up(self, window: object, key: int, *args: object) -> None:
         key_name = _keycode_to_name(key, "")
-        App.get_running_app().session_recorder.record_control_event(
+        _running_app().session_recorder.record_control_event(
             now_monotonic=time.monotonic(),
             event_name="key_up",
             payload={"key": key_name},
         )
-        App.get_running_app().controller.handle_key_up(key_name)
+        _running_app().controller.handle_key_up(key_name)
 
     # ── button handlers ────────────────────────────────────────────────────
 
     def toggle_calibration(self) -> None:
         """Navigate to the dedicated calibration wizard screen."""
-        App.get_running_app().root.current = "calibration"
+        _running_app().root.current = "calibration"
 
     def toggle_key_mode(self) -> None:
         """Przełącza mapowanie klawiszy między trybem strzałek i WASD."""
-        app = App.get_running_app()
+        app = _running_app()
         app.controller.key_mode = (
             "wasd" if app.controller.key_mode == "arrow" else "arrow"
         )
@@ -659,8 +680,8 @@ class GameScreen(Screen):
         self.key_mode = app.controller.key_mode
 
     def open_settings_popup(self) -> None:
-        """Wyświetla okno konfiguracji progów, strumieni i profilu użytkownika."""
-        app = App.get_running_app()
+        """Wyświetla okno konfiguracji progów, strumieni i profilu uLLytkownika."""
+        app = _running_app()
         settings = app.settings
         root = BoxLayout(orientation="vertical", spacing=8, padding=12)
         form = BoxLayout(orientation="vertical", spacing=6, size_hint_y=1)
@@ -757,7 +778,7 @@ class GameScreen(Screen):
         active_profile_id: str,
         default_profile_id: str,
     ) -> None:
-        app = App.get_running_app()
+        app = _running_app()
         try:
             candidate = AppSettings(
                 beta_threshold=float(beta),
@@ -789,7 +810,7 @@ class GameScreen(Screen):
         popup.dismiss()
 
     def _restore_defaults_from_popup(self, popup: Popup) -> None:
-        app = App.get_running_app()
+        app = _running_app()
         app.settings = AppSettings()
         app.apply_settings()
         app.persist_settings()
@@ -799,7 +820,7 @@ class GameScreen(Screen):
 
     def disconnect(self) -> None:
         """Rozłącza aktywne urządzenie i wraca do ekranu skanowania."""
-        app = App.get_running_app()
+        app = _running_app()
         app.connector.disconnect()
         app.processor.reset()
         app.controller.reset()
@@ -809,7 +830,7 @@ class GameScreen(Screen):
 
     def close_app(self) -> None:
         """Zamyka aplikację z poziomu ekranu gry."""
-        App.get_running_app().shutdown_app()
+        _running_app().shutdown_app()
 
 
 class RawSignalsScreen(Screen):
@@ -839,7 +860,7 @@ class RawSignalsScreen(Screen):
 
     def _refresh_snapshot(self, _dt: float) -> None:
         """Pobiera ostatnie próbki z cache aplikacji i odświeża widok."""
-        app = App.get_running_app()
+        app = _running_app()
         snapshot = app.get_raw_sensor_snapshot()
         self.eeg_value = snapshot.get("eeg", "--")
         self.imu_value = snapshot.get("imu", "--")
@@ -853,15 +874,15 @@ class RawSignalsScreen(Screen):
 
     def go_back(self) -> None:
         """Wraca do ekranu skanowania urządzeń."""
-        App.get_running_app().root.current = "scan"
+        _running_app().root.current = "scan"
 
     def open_user_guide(self) -> None:
         """Otwiera instrukcję obsługi z ekranu surowych danych."""
-        App.get_running_app().open_user_guide()
+        _running_app().open_user_guide()
 
     def go_to_main_menu(self) -> None:
         """Wraca do menu głównego aplikacji bez zamykania programu."""
-        App.get_running_app().root.current = "scan"
+        _running_app().root.current = "scan"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -925,7 +946,7 @@ class TestScreen(Screen):
         Window.unbind(on_key_up=self._on_key_up)
         self._keys_held = set()
         # Reset controller mouse state
-        App.get_running_app().controller.reset()
+        _running_app().controller.reset()
 
     # ── initialisation ─────────────────────────────────────────────────────
 
@@ -978,10 +999,10 @@ class TestScreen(Screen):
         button = getattr(touch, "button", None)
         if button == "left":
             self.left_active = False
-            App.get_running_app().controller.handle_mouse_up("left")
+            _running_app().controller.handle_mouse_up("left")
         elif button == "right":
             self.right_active = False
-            App.get_running_app().controller.handle_mouse_up("right")
+            _running_app().controller.handle_mouse_up("right")
         return super().on_touch_up(touch)
 
     # ── mouse effects ──────────────────────────────────────────────────────
@@ -989,7 +1010,7 @@ class TestScreen(Screen):
     def _handle_left_click(self, touch) -> None:
         """Left-click: dot pulses and flashes green (action pulse)."""
         self.left_active = True
-        App.get_running_app().controller.handle_mouse_down("left")
+        _running_app().controller.handle_mouse_down("left")
         Animation.cancel_all(self, 'dot_color', 'dot_radius')
         anim = (
             Animation(dot_color=[0.2, 1.0, 0.4, 1.0], dot_radius=28.0,
@@ -1003,7 +1024,7 @@ class TestScreen(Screen):
     def _handle_right_click(self, touch) -> None:
         """Right-click: animate dot smoothly back to screen centre."""
         self.right_active = True
-        App.get_running_app().controller.handle_mouse_down("right")
+        _running_app().controller.handle_mouse_down("right")
         Animation.cancel_all(self, 'dot_x', 'dot_y')
         Animation(
             dot_x=Window.width / 2.0,
@@ -1015,7 +1036,7 @@ class TestScreen(Screen):
 
     def _refresh_recorder_status(self, _dt: float) -> None:
         """Odświeża podsumowanie rejestratora pokazywane na ekranie."""
-        info = App.get_running_app().session_recorder.snapshot()
+        info = _running_app().session_recorder.snapshot()
         self.recording_active = bool(info.get("active", False))
         self.recorder_status = (
             f"Recorder: {'ON' if self.recording_active else 'OFF'} | "
@@ -1025,12 +1046,12 @@ class TestScreen(Screen):
 
     def toggle_recording(self) -> None:
         """Przełącza rejestrowanie sesji EEG do pamięci."""
-        recorder = App.get_running_app().session_recorder
+        recorder = _running_app().session_recorder
         if recorder.active:
             count = recorder.stop()
             self.replay_status = f"Replay: recorded {count} samples"
             return
-        app = App.get_running_app()
+        app = _running_app()
         state = app.connector.device_state
         session_name = recorder.start(
             now_monotonic=time.monotonic(),
@@ -1051,7 +1072,7 @@ class TestScreen(Screen):
 
     def clear_recording(self) -> None:
         """Czyści próbki sesji i zatrzymuje aktywny replay."""
-        recorder = App.get_running_app().session_recorder
+        recorder = _running_app().session_recorder
         recorder.stop()
         recorder.clear()
         if self._replay_event:
@@ -1063,7 +1084,7 @@ class TestScreen(Screen):
 
     def export_recording_csv(self) -> None:
         """Eksportuje nagraną sesję do pliku CSV/JSONL i raportu."""
-        recorder = App.get_running_app().session_recorder
+        recorder = _running_app().session_recorder
         info = recorder.snapshot()
         if info.get("samples", 0) == 0:
             self.replay_status = "Replay: nothing to export"
@@ -1081,7 +1102,7 @@ class TestScreen(Screen):
 
     def start_replay(self) -> None:
         """Uruchamia odtwarzanie ostatnio nagranej sesji sterowania."""
-        recorder = App.get_running_app().session_recorder
+        recorder = _running_app().session_recorder
         self._replay_data = recorder.replay_data()
         if not self._replay_data:
             self.replay_status = "Replay: no data"
@@ -1122,7 +1143,7 @@ class TestScreen(Screen):
 
     def go_to_main_menu(self) -> None:
         """Wraca z modułu diagnostycznego do menu głównego."""
-        App.get_running_app().root.current = "scan"
+        _running_app().root.current = "scan"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1197,7 +1218,7 @@ class CalibrationScreen(Screen):
     # ── periodic UI update (250 ms) ────────────────────────────────────────
 
     def _tick(self, dt: float) -> None:
-        app = App.get_running_app()
+        app = _running_app()
         sq = app.processor.get_signal_quality()
         self.quality_tp9  = sq.get("TP9",  0.0)
         self.quality_af7  = sq.get("AF7",  0.0)
@@ -1226,7 +1247,7 @@ class CalibrationScreen(Screen):
 
     def start_calibration(self) -> None:
         """Begin recording a new EEG baseline."""
-        app = App.get_running_app()
+        app = _running_app()
         self.is_calibrating = True
         self.calibration_done = False
         self._elapsed = 0.0
@@ -1239,7 +1260,7 @@ class CalibrationScreen(Screen):
 
     def _advance_or_finish(self) -> None:
         """Przechodzi do kolejnego etapu albo finalizuje profil."""
-        app = App.get_running_app()
+        app = _running_app()
         if self.current_step == 0:
             app.processor.stop_calibration()
             self.current_step = 1
@@ -1261,8 +1282,8 @@ class CalibrationScreen(Screen):
         self._finish_calibration()
 
     def _finish_calibration(self) -> None:
-        """Kończy kalibrację i zapisuje profil użytkownika."""
-        app = App.get_running_app()
+        """Kończy kalibrację i zapisuje profil uLLytkownika."""
+        app = _running_app()
         app.processor.stop_calibration()
         self.is_calibrating = False
         self.timer_value = 0.0
@@ -1295,7 +1316,7 @@ class CalibrationScreen(Screen):
 
     def go_to_main_menu(self) -> None:
         """Wraca z kreatora kalibracji do menu głównego."""
-        App.get_running_app().root.current = "scan"
+        _running_app().root.current = "scan"
 
 
 class FocusModuleScreen(Screen):
@@ -1330,7 +1351,7 @@ class FocusModuleScreen(Screen):
     def go_to_main_menu(self) -> None:
         """Wraca do menu głównego i zatrzymuje ewentualną sesję."""
         self.stop_session()
-        App.get_running_app().root.current = "scan"
+        _running_app().root.current = "scan"
 
 
 class BreathModuleScreen(Screen):
@@ -1386,7 +1407,7 @@ class BreathModuleScreen(Screen):
     def go_to_main_menu(self) -> None:
         """Wraca do menu głównego i zatrzymuje ćwiczenie oddechowe."""
         self.stop_breathing()
-        App.get_running_app().root.current = "scan"
+        _running_app().root.current = "scan"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1408,8 +1429,8 @@ class NeuroGamingApp(App):
         self._log_handler = _UILogHandler(self)
         logging.getLogger().addHandler(self._log_handler)
         self._sound_paths: dict[str, str] = {}
-        self._sounds: dict[str, object] = {}
-        # Lock i cache ostatnich ramek sensorów używane przez zakładkę "Surowe sygnały".
+        self._sounds: dict[str, Any] = {}
+        # Lock i cache ostatnich ramek sensorów uLLywane przez zakładkę "Surowe sygnały".
         self._raw_signal_lock = threading.Lock()
         self._raw_sensor_values: dict[str, str] = {
             "eeg": "--",
@@ -1417,7 +1438,7 @@ class NeuroGamingApp(App):
             "ppg": "--",
         }
         self.settings = AppSettings()
-        # Flagi bezpieczeństwa używane przez ekran sterowania.
+        # Flagi bezpieczeństwa uLLywane przez ekran sterowania.
         self.safe_pause_active = False
         self.keyboard_fallback_forced = False
 
@@ -1995,3 +2016,6 @@ if __name__ == "__main__":
         print("NeuroGaming is already running. Close the existing window and try again.")
         raise SystemExit(0)
     NeuroGamingApp(instance_lock=app_lock, replay_path=args.replay_path).run()
+
+
+
