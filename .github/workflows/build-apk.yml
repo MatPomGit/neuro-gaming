@@ -112,4 +112,4 @@ jobs:
           name: neuro-gaming-${{ github.event.inputs.build_mode || 'debug' }}-apk
           path: bin/*.apk
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 7
