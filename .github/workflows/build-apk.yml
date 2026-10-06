@@ -15,6 +15,16 @@ on:
         options:
           - debug
           - release
+      publish_prerelease:
+        description: "Publish this APK as a durable technical prerelease"
+        required: true
+        default: false
+        type: boolean
+      release_tag:
+        description: "Release tag, e.g. neuro-gaming-v1.3.0-rc1; required when publishing"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -112,4 +122,66 @@ jobs:
           name: neuro-gaming-${{ github.event.inputs.build_mode || 'debug' }}-apk
           path: bin/*.apk
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 3
+
+  publish-prerelease:
+    name: Publish technical prerelease
+    needs: build-apk
+    if: ${{ inputs.publish_prerelease }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - name: Validate release tag
+        shell: bash
+        run: |
+          test -n "${{ inputs.release_tag }}" || {
+            echo "::error::release_tag is required when publish_prerelease=true"
+            exit 2
+          }
+
+      - name: Download APK
+        uses: actions/download-artifact@v4
+        with:
+          name: neuro-gaming-${{ inputs.build_mode }}-apk
+          path: release
+
+      - name: Generate SHA-256 manifest
+        shell: bash
+        run: |
+          cd release
+          sha256sum *.apk > SHA256SUMS.txt
+
+      - name: Publish GitHub prerelease
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ inputs.release_tag }}
+          target_commitish: ${{ github.sha }}
+          name: "NeuroGaming 1.3.0 technical prerelease"
+          prerelease: true
+          body: |
+            Reproducible APK snapshot for NeuroGaming 1.3.0.
+            Build mode: ${{ inputs.build_mode }}.
+            The repository's Python and Buildozer version metadata are aligned to 1.3.0.
+          files: |
+            release/*.apk
+            release/SHA256SUMS.txt
+
+      - name: Delete transient Actions artifact
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api --paginate \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.workflow_run.id == ${{ github.run_id }}) | .id' \
+          | while read -r artifact_id; do
+              [ -z "$artifact_id" ] && continue
+              gh api --method DELETE \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "repos/${GITHUB_REPOSITORY}/actions/artifacts/$artifact_id"
+            done
