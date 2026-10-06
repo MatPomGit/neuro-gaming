@@ -10,7 +10,7 @@ source.dir      = .
 source.include_exts = py,kv,png,jpg,ttf,atlas
 source.exclude_dirs = tests,.github,bin,.buildozer,__pycache__,.git
 
-version         = 1.0.0
+version         = 1.3.0
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
