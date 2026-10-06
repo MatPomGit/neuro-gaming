@@ -163,8 +163,8 @@ The APK is placed in the `bin/` directory.
 2. Select **Build Android APK**.
 3. Click **Run workflow**, choose `debug` or `release`, and press
    **Run workflow**.
-4. Once the workflow completes, download the APK from the **Artifacts**
-   section of the run.
+4. For a temporary engineering build, leave `publish_prerelease=false`; the APK is kept only as a short-lived Actions artifact.
+5. For a durable, reproducible state marker, set `publish_prerelease=true` and provide an explicit `release_tag` (for example `neuro-gaming-v1.3.0-rc1`). The workflow publishes the APK and `SHA256SUMS.txt` as a GitHub prerelease and removes the transient Actions artifact after successful publication.
 
 ---
 
